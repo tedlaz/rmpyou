@@ -231,18 +231,19 @@ fn parse_hex(s: &str) -> Option<Color> {
     Some(Color::from_rgb_u8((v >> 16) as u8, (v >> 8) as u8, v as u8))
 }
 
+/// Filtergraph from input `[0:v]` to `[v]`. The image is always *overlaid* on a full-frame
+/// background, so its transparent pixels show the fill (padding alone would flatten them to black).
 /// `fill`: None = blurred copy of the image, Some(0xRRGGBB) = solid color.
 fn video_filter((w, h): (u32, u32), fill: Option<&str>) -> String {
-    match fill {
-        Some(color) => format!(
-            "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={color},setsar=1,format=yuv420p"
-        ),
+    let fg = format!("scale={w}:{h}:force_original_aspect_ratio=decrease");
+    let bg = match fill {
+        // r=2 matches the image input's frame rate so the output stays at 2 fps
+        Some(color) => format!("color=c={color}:s={w}x{h}:r=2[bg];[0:v]{fg}[fg]"),
         None => format!(
-            "split[a][b];[a]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},{BLUR}[bg];\
-             [b]scale={w}:{h}:force_original_aspect_ratio=decrease[fg];\
-             [bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p"
+            "[0:v]split[a][b];[a]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},{BLUR}[bg];[b]{fg}[fg]"
         ),
-    }
+    };
+    format!("{bg};[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p[v]")
 }
 
 /// Encode still image + audio into a YouTube-ready MP4. The MP3 stream is copied untouched (no quality
@@ -262,7 +263,7 @@ fn render(
         .arg(image)
         .arg("-i")
         .arg(audio)
-        .args(["-map", "0:v", "-map", "1:a", "-vf", &vf])
+        .args(["-filter_complex", &vf, "-map", "[v]", "-map", "1:a"])
         .args(["-c:v", "libx264", "-tune", "stillimage", "-preset", "medium", "-crf", "18", "-profile:v", "high"])
         .args(["-c:a", "copy", "-movflags", "+faststart"]);
     if duration > 0.0 {
@@ -891,6 +892,26 @@ mod tests {
         assert!(is_newer("1.10.0", "1.9.3"));
         assert!(!is_newer("0.1.0", "0.1.0"));
         assert!(!is_newer("0.0.9", "0.1.0"));
+    }
+
+    /// Transparent pixels must show the fill color in the video, not black.
+    #[test]
+    fn transparent_image_shows_fill_color() {
+        let dir = std::env::temp_dir().join("rmpyou-test-alpha");
+        fs::create_dir_all(&dir).unwrap();
+        let (img, mp3, out) = (dir.join("t.png"), dir.join("a.mp3"), dir.join("o.mp4"));
+        // 16:9 image: left half fully transparent, right half opaque white.
+        assert!(tool("ffmpeg")
+            .args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=white:s=320x180,format=rgba,geq=r='255':g='255':b='255':a='if(lt(X,160),0,255)'", "-frames:v", "1"])
+            .arg(&img).status().unwrap().success());
+        assert!(tool("ffmpeg").args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=duration=1"]).arg(&mp3).status().unwrap().success());
+        render(&img, &mp3, &out, (1280, 720), Some("0xFF0000"), 1.0, |_| {}).unwrap();
+        // Sample the middle of the transparent left half.
+        let px = tool("ffmpeg")
+            .args(["-loglevel", "error", "-i"]).arg(&out)
+            .args(["-vf", "crop=8:8:316:356,scale=1:1:flags=area", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
+            .output().unwrap().stdout;
+        assert!(px[0] > 200 && px[1] < 60 && px[2] < 60, "expected red, got {px:?}");
     }
 
     #[test]
