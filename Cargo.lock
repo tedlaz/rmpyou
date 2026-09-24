@@ -4660,6 +4660,7 @@ dependencies = [
  "self_update",
  "slint",
  "slint-build",
+ "ureq",
 ]
 
 [[package]]

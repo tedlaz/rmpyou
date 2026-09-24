@@ -16,7 +16,7 @@ use slint::winit_030::{
     EventResult, WinitWindowAccessor,
     winit::{event::WindowEvent, window::ResizeDirection},
 };
-use slint::{Color, ComponentHandle};
+use slint::{Color, ComponentHandle, Model, ModelRc, VecModel};
 
 slint::include_modules!();
 
@@ -258,6 +258,41 @@ fn render(
     }
 }
 
+// ───────────── Color Hunt palettes ─────────────
+
+/// Fetches one page of palettes from colorhunt.co's public feed (the one its own site uses).
+/// sort: 0 popular (all time), 1 new, 2 random.
+fn fetch_palettes(sort: i32, step: u32) -> Result<Vec<[String; 4]>, String> {
+    let sort = ["popular", "new", "random"][sort.clamp(0, 2) as usize];
+    let step = step.to_string();
+    let body = ureq::post("https://colorhunt.co/php/feed.php")
+        .send_form([("step", step.as_str()), ("sort", sort), ("tags", ""), ("timeframe", "4000")])
+        .map_err(|e| format!("Couldn't reach colorhunt.co ({e})"))?
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| e.to_string())?;
+    Ok(parse_palettes(&body))
+}
+
+/// Pulls every `"code":"<24 hex>"` out of the feed JSON; each code is 4 colors of 6 hex digits.
+fn parse_palettes(json: &str) -> Vec<[String; 4]> {
+    json.split("\"code\":\"")
+        .skip(1)
+        .filter_map(|s| s.get(..24))
+        .filter(|code| code.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(|code| std::array::from_fn(|i| code[i * 6..i * 6 + 6].to_uppercase()))
+        .collect()
+}
+
+fn to_hunt_palette(hexes: &[String; 4]) -> HuntPalette {
+    let colors: Vec<Color> = hexes.iter().filter_map(|h| parse_hex(h)).collect();
+    let hexes: Vec<slint::SharedString> = hexes.iter().map(|h| h.as_str().into()).collect();
+    HuntPalette {
+        colors: ModelRc::new(VecModel::from(colors)),
+        hexes: ModelRc::new(VecModel::from(hexes)),
+    }
+}
+
 // ───────────── settings ─────────────
 
 fn settings_file() -> Option<PathBuf> {
@@ -442,6 +477,56 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui = weak.unwrap();
         if let Some(c) = parse_hex(&text) {
             ui.set_custom_color(c);
+            save_settings(&ui);
+        }
+    });
+
+    // Color Hunt: pages load in a thread; a generation counter drops responses from a
+    // tab the user already switched away from.
+    let hunt_model = std::rc::Rc::new(VecModel::<HuntPalette>::default());
+    app.set_hunt_palettes(hunt_model.clone().into());
+    let hunt_gen = std::sync::Arc::new(AtomicU32::new(0));
+    let hunt_step = std::rc::Rc::new(std::cell::Cell::new(0u32));
+    let weak = app.as_weak();
+    app.on_hunt_load(move |sort, append| {
+        let ui = weak.unwrap();
+        let step = if append { hunt_step.get() + 1 } else { 0 };
+        hunt_step.set(step);
+        if !append {
+            hunt_model.set_vec(Vec::new());
+        }
+        let generation = hunt_gen.fetch_add(1, Ordering::SeqCst) + 1;
+        ui.set_hunt_loading(true);
+        ui.set_hunt_error("".into());
+        let (weak, hunt_gen) = (weak.clone(), hunt_gen.clone());
+        thread::spawn(move || {
+            let result = fetch_palettes(sort, step);
+            let _ = weak.upgrade_in_event_loop(move |ui| {
+                if hunt_gen.load(Ordering::SeqCst) != generation {
+                    return; // stale
+                }
+                ui.set_hunt_loading(false);
+                match result {
+                    Ok(list) if list.is_empty() => ui.set_hunt_error("No more palettes.".into()),
+                    Ok(list) => {
+                        let model = ui.get_hunt_palettes();
+                        let model = model.as_any().downcast_ref::<VecModel<HuntPalette>>().unwrap();
+                        model.extend(list.iter().map(to_hunt_palette));
+                    }
+                    Err(e) => ui.set_hunt_error(e.into()),
+                }
+            });
+        });
+    });
+
+    let weak = app.as_weak();
+    app.on_hunt_pick(move |hex| {
+        let ui = weak.unwrap();
+        if let Some(c) = parse_hex(&hex) {
+            ui.set_custom_color(c);
+            ui.set_custom_hex(format!("#{hex}").into());
+            ui.set_fill_kind(4);
+            ui.set_hunt_open(false);
             save_settings(&ui);
         }
     });
@@ -698,5 +783,28 @@ mod tests {
         assert_eq!(parse_hex("ff0000"), Some(Color::from_rgb_u8(255, 0, 0)));
         assert_eq!(parse_hex("#12345"), None);
         assert_eq!(parse_hex("#GGGGGG"), None);
+    }
+
+    #[test]
+    fn parses_colorhunt_feed() {
+        let json = r#"[{"code":"fff5f5f7d6d0e2b4bd4a4a4a","likes":"2550","date":"4 weeks"},{"code":"bad","likes":"1"},{"code":"8b9a6ef7f2ebeae2d6eeeeee","likes":"1237"}]"#;
+        let p = parse_palettes(json);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0], ["FFF5F5", "F7D6D0", "E2B4BD", "4A4A4A"].map(String::from));
+        assert_eq!(p[1][3], "EEEEEE");
+    }
+}
+
+#[cfg(test)]
+mod live {
+    /// Hits colorhunt.co; run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn fetches_colorhunt() {
+        for sort in 0..3 {
+            let p = super::fetch_palettes(sort, 0).unwrap();
+            assert!(p.len() >= 10, "sort {sort}: {} palettes", p.len());
+        }
+        assert_ne!(super::fetch_palettes(1, 0).unwrap()[0], super::fetch_palettes(1, 1).unwrap()[0]);
     }
 }

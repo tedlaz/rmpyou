@@ -356,6 +356,46 @@ component Tag inherits Rectangle {
     }
 }
 
+export struct HuntPalette {
+    colors: [color],
+    hexes: [string],
+}
+
+// One Color Hunt palette: four stacked bands, top one biggest (like colorhunt.co).
+// Hovering a band shows its hex; clicking picks it.
+component HuntCard inherits Rectangle {
+    in property <HuntPalette> pal;
+    callback pick(string);
+    property <[float]> tops: [0, 0.38, 0.62, 0.81];
+    property <[float]> sizes: [0.38, 0.24, 0.19, 0.19];
+    border-radius: 12px;
+    drop-shadow-blur: 12px;
+    drop-shadow-offset-y: 4px;
+    drop-shadow-color: #00000030;
+    for c[j] in root.pal.colors: Rectangle {
+        y: root.height * root.tops[j];
+        height: root.height * root.sizes[j];
+        background: c;
+        border-top-left-radius: j == 0 ? 12px : 0px;
+        border-top-right-radius: j == 0 ? 12px : 0px;
+        border-bottom-left-radius: j == 3 ? 12px : 0px;
+        border-bottom-right-radius: j == 3 ? 12px : 0px;
+        accessible-role: button;
+        accessible-label: "Use color #" + root.pal.hexes[j];
+        accessible-action-default => { root.pick(root.pal.hexes[j]); }
+        band-ta := TouchArea { mouse-cursor: pointer; clicked => { root.pick(root.pal.hexes[j]); } }
+        if band-ta.has-hover: Rectangle {
+            x: 8px;
+            y: parent.height - self.height - 6px;
+            width: hex-text.preferred-width + 14px;
+            height: 20px;
+            border-radius: 10px;
+            background: #000000a0;
+            hex-text := Text { text: "#" + root.pal.hexes[j]; color: white; font-size: 11px; font-weight: 700; }
+        }
+    }
+}
+
 export component AppWindow inherits Window {
     title: "rmpyou — MP3 to YouTube video";
     no-frame: true;
@@ -397,6 +437,13 @@ export component AppWindow inherits Window {
     in property <bool> is-max;
     in property <bool> dragging;
     in property <bool> native-frame; // OS draws rounded corners + border (Windows 11)
+
+    // Color Hunt palette browser
+    in-out property <bool> hunt-open;
+    in property <[HuntPalette]> hunt-palettes;
+    in property <bool> hunt-loading;
+    in property <string> hunt-error;
+    in-out property <int> hunt-sort: 0; // 0 popular, 1 new, 2 random
     in-out property <bool> settings-open;
 
     // Settings / about
@@ -434,6 +481,12 @@ export component AppWindow inherits Window {
     callback minimize();
     callback toggle-maximize();
     callback close-window();
+    callback hunt-load(int, bool); // sort, append next page
+    callback hunt-pick(string);    // hex without #
+    function open-hunt() {
+        hunt-open = true;
+        if hunt-palettes.length == 0 && !hunt-loading { hunt-load(hunt-sort, false); }
+    }
 
     property <[string]> res-labels: ["720p", "1080p", "4K"];
     property <bool> can-render: ffmpeg-ok && !ffmpeg-busy && has-cover && audio-path != "" && out-path != "" && !rendering;
@@ -671,7 +724,7 @@ export component AppWindow inherits Window {
                         // Custom color: the chip turns into a hex input when selected
                         custom := Rectangle {
                             height: 40px;
-                            min-width: 118px;
+                            min-width: 108px;
                             border-radius: 10px;
                             background: root.fill-kind == 4 ? Theme.p.accent : (custom-ta.has-hover ? Theme.p.border : Theme.p.field);
                             border-width: root.fill-kind == 4 ? 0px : 1px;
@@ -711,6 +764,27 @@ export component AppWindow inherits Window {
                                     accessible-label: "Custom hex color";
                                 }
                             }
+                        }
+                        // Color Hunt palette browser
+                        hunt-btn := Rectangle {
+                            width: 40px;
+                            height: 40px;
+                            border-radius: 10px;
+                            background: hunt-ta.has-hover ? Theme.p.border : Theme.p.field;
+                            border-width: 1px;
+                            border-color: hunt-ta.has-hover ? Theme.p.accent : Theme.p.border;
+                            accessible-role: button;
+                            accessible-label: "Browse Color Hunt palettes";
+                            accessible-action-default => { root.open-hunt(); }
+                            for c[i] in [#f9ed69, #f08a5d, #b83b5e, #6a2c70]: Rectangle {
+                                x: 11px + Math.mod(i, 2) * 9px;
+                                y: 11px + Math.floor(i / 2) * 9px;
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 2px;
+                                background: c;
+                            }
+                            hunt-ta := TouchArea { mouse-cursor: pointer; clicked => { root.open-hunt(); } }
                         }
                     }
 
@@ -1065,6 +1139,148 @@ export component AppWindow inherits Window {
                         color: Theme.p.muted;
                         font-size: 11px;
                         wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+
+    // ───────────── Color Hunt picker ─────────────
+    if root.hunt-open: Rectangle {
+        y: root.bar-h;
+        height: root.height - root.bar-h;
+        background: #00000080;
+        TouchArea { clicked => { root.hunt-open = false; } }
+
+        Rectangle {
+            width: min(620px, parent.width - 32px);
+            height: parent.height - 32px;
+            x: (parent.width - self.width) / 2;
+            y: 16px;
+            border-radius: 18px;
+            background: Theme.p.bg1;
+            border-width: 1px;
+            border-color: Theme.p.border;
+            drop-shadow-blur: 40px;
+            drop-shadow-color: #00000080;
+            TouchArea { } // keep clicks inside the panel
+
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 36px;
+                            height: 36px;
+                            for c[i] in [#f9ed69, #f08a5d, #b83b5e, #6a2c70]: Rectangle {
+                                x: Math.mod(i, 2) * 19px;
+                                y: Math.floor(i / 2) * 19px;
+                                width: 17px;
+                                height: 17px;
+                                border-radius: 5px;
+                                background: c;
+                            }
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        spacing: 2px;
+                        Text { text: "Color Hunt palettes"; color: Theme.p.text; font-size: 18px; font-weight: 800; }
+                        Text { text: "Click any color to use it as the background fill"; color: Theme.p.muted; font-size: 12px; overflow: elide; }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 32px;
+                            height: 32px;
+                            border-radius: 16px;
+                            background: hunt-close-ta.has-hover ? Theme.p.border : Theme.p.field;
+                            accessible-role: button;
+                            accessible-label: "Close palettes";
+                            accessible-action-default => { root.hunt-open = false; }
+                            Path {
+                                width: 10px;
+                                height: 10px;
+                                viewbox-width: 10;
+                                viewbox-height: 10;
+                                commands: "M 0 0 L 10 10 M 10 0 L 0 10";
+                                stroke: Theme.p.text;
+                                stroke-width: 1.4px;
+                                fill: transparent;
+                            }
+                            hunt-close-ta := TouchArea { mouse-cursor: pointer; clicked => { root.hunt-open = false; } }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    for label[i] in ["Popular", "New", "Random"]: Chip {
+                        text: label;
+                        selected: root.hunt-sort == i;
+                        clicked => { root.hunt-sort = i; root.hunt-load(i, false); }
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    grid := Flickable {
+                        property <int> cols: self.width > 460px ? 4 : 3;
+                        property <length> gap: 12px;
+                        property <length> cw: (self.width - (self.cols - 1) * self.gap) / self.cols;
+                        property <length> ch: 130px;
+                        property <int> rows: Math.ceil(root.hunt-palettes.length / self.cols);
+                        content-height: self.rows * (self.ch + self.gap) + 56px;
+                        for pal[i] in root.hunt-palettes: HuntCard {
+                            x: Math.mod(i, grid.cols) * (grid.cw + grid.gap);
+                            y: Math.floor(i / grid.cols) * (grid.ch + grid.gap);
+                            width: grid.cw;
+                            height: grid.ch;
+                            pal: pal;
+                            pick(hex) => { root.hunt-pick(hex); }
+                        }
+                        if root.hunt-palettes.length > 0: Button {
+                            x: (grid.width - self.width) / 2;
+                            y: grid.rows * (grid.ch + grid.gap) + 4px;
+                            enabled: !root.hunt-loading;
+                            text: root.hunt-loading ? "Loading…" : "Load more";
+                            clicked => { root.hunt-load(root.hunt-sort, true); }
+                        }
+                    }
+                    if root.hunt-palettes.length == 0: VerticalLayout {
+                        alignment: center;
+                        spacing: 10px;
+                        Text {
+                            text: root.hunt-loading ? "Loading palettes…" : root.hunt-error != "" ? root.hunt-error : "No palettes";
+                            color: Theme.p.muted;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                        }
+                        if !root.hunt-loading && root.hunt-error != "": HorizontalLayout {
+                            alignment: center;
+                            Button { text: "Try again"; clicked => { root.hunt-load(root.hunt-sort, false); } }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: center;
+                    Text { text: "Palettes from"; color: Theme.p.muted; font-size: 11px; }
+                    Text {
+                        text: "colorhunt.co";
+                        color: Theme.p.accent;
+                        font-size: 11px;
+                        font-weight: 700;
+                        accessible-role: button;
+                        accessible-action-default => { root.open-url("https://colorhunt.co"); }
+                        TouchArea { mouse-cursor: pointer; clicked => { root.open-url("https://colorhunt.co"); } }
                     }
                 }
             }
