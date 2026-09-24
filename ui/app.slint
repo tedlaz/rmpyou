@@ -412,7 +412,6 @@ export component AppWindow inherits Window {
     // Settings / about
     in property <string> app-version;
     in property <string> author;
-    in property <string> author-initials;
     in property <string> repo-url;
     in-out property <bool> auto-update: true;
     in property <string> update-version;
@@ -1035,14 +1034,19 @@ export component AppWindow inherits Window {
                     title: "CREDITS";
                     HorizontalLayout {
                         spacing: 14px;
+                        // GitHub avatar (pre-cut to a circle: the software renderer can't clip round)
                         Rectangle {
-                            width: 40px;
-                            height: 40px;
-                            border-radius: 20px;
-                            background: Theme.p.accent2;
+                            width: 44px;
+                            height: 44px;
+                            border-radius: 22px;
+                            background: Theme.p.accent;
                             drop-shadow-blur: 14px;
                             drop-shadow-color: Theme.p.accent2.transparentize(50%);
-                            Text { text: root.author-initials; color: white; font-size: 15px; font-weight: 800; }
+                            accessible-role: button;
+                            accessible-label: "Open author's GitHub profile";
+                            accessible-action-default => { root.open-url("https://github.com/tedlaz"); }
+                            Image { source: @image-url("avatar.png"); width: 40px; height: 40px; }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.open-url("https://github.com/tedlaz"); } }
                         }
                         VerticalLayout {
                             alignment: center;

@@ -425,10 +425,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let app = AppWindow::new()?;
 
     let author = env!("CARGO_PKG_AUTHORS").split(':').next().unwrap_or_default();
-    let initials: String = author.split_whitespace().filter_map(|w| w.chars().next()).take(2).collect();
     app.set_app_version(env!("CARGO_PKG_VERSION").into());
     app.set_author(author.into());
-    app.set_author_initials(initials.to_uppercase().into());
     app.set_repo_url(repo().map(|r| format!("https://github.com/{r}")).unwrap_or_default().into());
     load_settings(&app);
     if let Some(c) = parse_hex(&app.get_custom_hex()) {
