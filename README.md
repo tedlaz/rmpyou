@@ -11,6 +11,7 @@ Turn an **MP3** and a **cover image** into a video ready to upload to YouTube.
 - Updates itself from GitHub Releases
 - Custom frameless title bar
 - Pure CPU: Slint software renderer, no GPU needed
+- Small: ~9 MB exe (~4.8 MB zipped). Uses Windows' own TLS and `tar.exe` (Windows 10 1803+) instead of bundling them
 
 ## Download
 

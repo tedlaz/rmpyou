@@ -5,10 +5,7 @@ use std::{
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{
-        Mutex,
-        atomic::{AtomicU32, Ordering},
-    },
+    sync::atomic::{AtomicU32, Ordering},
     thread,
 };
 
@@ -85,23 +82,69 @@ fn refresh_ffmpeg(ui: &AppWindow) {
     ui.set_ffmpeg_path(found.map(|t| t.0.to_string_lossy().into_owned()).unwrap_or_default().into());
 }
 
+// ───────────── networking (Windows TLS, no bundled crypto) ─────────────
+
+fn http() -> ureq::Agent {
+    use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
+    let tls = TlsConfig::builder().provider(TlsProvider::NativeTls).root_certs(RootCerts::PlatformVerifier).build();
+    ureq::Agent::new_with_config(ureq::config::Config::builder().tls_config(tls).build())
+}
+
+/// Streams `url` into `dest`, reporting (bytes so far, total if known).
+fn download(url: &str, dest: &Path, on_progress: impl Fn(u64, Option<u64>)) -> Result<(), String> {
+    use std::io::Write;
+    let mut resp = http().get(url).call().map_err(|e| format!("download failed: {e}"))?;
+    let total = resp.body().content_length();
+    let mut reader = resp.body_mut().as_reader();
+    let mut file = fs::File::create(dest).map_err(|e| e.to_string())?;
+    let (mut buf, mut done) = (vec![0u8; 64 * 1024], 0u64);
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| format!("download failed: {e}"))?;
+        if n == 0 {
+            return file.flush().map_err(|e| e.to_string());
+        }
+        file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        done += n as u64;
+        on_progress(done, total);
+    }
+}
+
+/// Unzips with Windows' built-in bsdtar (Windows 10+), so no zip crate is needed.
+/// Uses the System32 copy explicitly: GNU tar from Git on PATH can't read zips.
+fn unzip(zip: &Path, into: &Path) -> Result<(), String> {
+    let root = std::env::var_os("SystemRoot").ok_or("SystemRoot is not set")?;
+    let mut cmd = Command::new(PathBuf::from(root).join("System32").join("tar.exe"));
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let ok = cmd.arg("-xf").arg(zip).arg("-C").arg(into).status().is_ok_and(|s| s.success());
+    ok.then_some(()).ok_or_else(|| "unzip failed".into())
+}
+
+/// Every string value of `"key"` in a JSON document. Plain scan: fine for the flat,
+/// escape-free values we read (tags, URLs, hex codes).
+fn json_strings<'a>(json: &'a str, key: &str) -> Vec<&'a str> {
+    let pat = format!("\"{key}\"");
+    json.match_indices(&pat)
+        .filter_map(|(i, _)| {
+            let rest = json[i + pat.len()..].trim_start().strip_prefix(':')?.trim_start().strip_prefix('"')?;
+            Some(&rest[..rest.find('"')?])
+        })
+        .collect()
+}
+
 /// Downloads FFmpeg into the managed dir. Swaps in atomically-ish: the old copy is only
 /// removed once the new one is fully downloaded and extracted.
-fn install_ffmpeg(on_progress: impl Fn(u64, Option<u64>) + Send + Sync + 'static) -> Result<(), String> {
+fn install_ffmpeg(on_progress: impl Fn(u64, Option<u64>)) -> Result<(), String> {
     let dir = managed_dir().ok_or("LOCALAPPDATA is not set")?;
     let staging = dir.with_file_name("ffmpeg-staging");
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
     let zip = staging.join("ffmpeg.zip");
-    let file = fs::File::create(&zip).map_err(|e| e.to_string())?;
-    self_update::Download::from_url(FFMPEG_URL)
-        .progress_callback(on_progress)
-        .download_to(file)
-        .map_err(|e| format!("download failed: {e}"))?;
-    self_update::Extract::from_source(&zip)
-        .archive(self_update::ArchiveKind::Zip)
-        .extract_into(&staging)
-        .map_err(|e| format!("unzip failed: {e}"))?;
+    download(FFMPEG_URL, &zip, on_progress)?;
+    unzip(&zip, &staging)?;
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let root = staging.join(FFMPEG_ZIP_ROOT);
@@ -265,7 +308,8 @@ fn render(
 fn fetch_palettes(sort: i32, step: u32) -> Result<Vec<[String; 4]>, String> {
     let sort = ["popular", "new", "random"][sort.clamp(0, 2) as usize];
     let step = step.to_string();
-    let body = ureq::post("https://colorhunt.co/php/feed.php")
+    let body = http()
+        .post("https://colorhunt.co/php/feed.php")
         .send_form([("step", step.as_str()), ("sort", sort), ("tags", ""), ("timeframe", "4000")])
         .map_err(|e| format!("Couldn't reach colorhunt.co ({e})"))?
         .body_mut()
@@ -274,12 +318,11 @@ fn fetch_palettes(sort: i32, step: u32) -> Result<Vec<[String; 4]>, String> {
     Ok(parse_palettes(&body))
 }
 
-/// Pulls every `"code":"<24 hex>"` out of the feed JSON; each code is 4 colors of 6 hex digits.
+/// Every `"code":"<24 hex>"` in the feed JSON; each code is 4 colors of 6 hex digits.
 fn parse_palettes(json: &str) -> Vec<[String; 4]> {
-    json.split("\"code\":\"")
-        .skip(1)
-        .filter_map(|s| s.get(..24))
-        .filter(|code| code.bytes().all(|b| b.is_ascii_hexdigit()))
+    json_strings(json, "code")
+        .into_iter()
+        .filter(|code| code.len() == 24 && code.bytes().all(|b| b.is_ascii_hexdigit()))
         .map(|code| std::array::from_fn(|i| code[i * 6..i * 6 + 6].to_uppercase()))
         .collect()
 }
@@ -350,30 +393,62 @@ fn repo() -> Option<&'static str> {
     option_env!("GITHUB_REPOSITORY")
 }
 
-fn updater() -> Option<self_update::backends::github::Update> {
-    let (owner, name) = repo()?.split_once('/')?;
-    self_update::backends::github::Update::configure()
-        .repo_owner(owner)
-        .repo_name(name)
-        .bin_name("rmpyou")
-        .current_version(self_update::cargo_crate_version!())
-        .no_confirm(true)
-        .show_output(false)
-        .show_download_progress(false)
-        .build()
-        .ok()
+/// Release asset built by .github/workflows/release.yml.
+const RELEASE_ASSET: &str = "rmpyou-x86_64-pc-windows-msvc.zip";
+
+/// "1.10.0" > "1.9.3". Non-numeric parts count as 0.
+fn is_newer(candidate: &str, current: &str) -> bool {
+    let parse = |v: &str| v.split('.').map(|p| p.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
+    parse(candidate) > parse(current)
+}
+
+/// The latest GitHub release as (version, zip URL) if it's newer than this build.
+fn newer_release() -> Result<Option<(String, String)>, String> {
+    let repo = repo().ok_or("updates are off in local builds")?;
+    let body = http()
+        .get(format!("https://api.github.com/repos/{repo}/releases/latest"))
+        .call()
+        .map_err(|e| e.to_string())?
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| e.to_string())?;
+    let version = json_strings(&body, "tag_name").first().ok_or("no releases")?.trim_start_matches('v').to_string();
+    let url = json_strings(&body, "browser_download_url").into_iter().find(|u| u.ends_with(RELEASE_ASSET));
+    Ok(url.filter(|_| is_newer(&version, env!("CARGO_PKG_VERSION"))).map(|u| (version, u.to_string())))
+}
+
+/// Downloads the release zip and swaps the running exe: Windows lets a running exe be
+/// renamed (not deleted), so it moves aside to `.old` and is cleaned up on next start.
+fn install_update(url: &str) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let staging = std::env::temp_dir().join("rmpyou-update");
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+    let zip = staging.join("update.zip");
+    download(url, &zip, |_, _| {})?;
+    unzip(&zip, &staging)?;
+    let new = staging.join("rmpyou.exe");
+    let old = exe.with_extension("old");
+    let _ = fs::remove_file(&old);
+    fs::rename(&exe, &old).map_err(|e| e.to_string())?;
+    if let Err(e) = fs::copy(&new, &exe) {
+        let _ = fs::rename(&old, &exe); // put the working exe back
+        return Err(e.to_string());
+    }
+    let _ = fs::remove_dir_all(&staging);
+    Ok(())
 }
 
 fn check_for_update(weak: slint::Weak<AppWindow>) {
     thread::spawn(move || {
-        let result = updater().map(|u| u.is_update_available());
+        let result = newer_release();
         let _ = weak.upgrade_in_event_loop(move |ui| match result {
-            Some(Ok(Some(release))) => {
-                ui.set_update_version(release.version().into());
+            Ok(Some((version, _))) => {
+                ui.set_update_version(version.into());
                 ui.set_update_state("available".into());
             }
-            Some(Ok(None)) => ui.set_update_state("latest".into()),
-            _ => ui.set_update_state("failed".into()),
+            Ok(None) => ui.set_update_state("latest".into()),
+            Err(_) => ui.set_update_state("failed".into()),
         });
     });
 }
@@ -412,8 +487,26 @@ fn set_output(ui: &AppWindow, path: &Path) {
     ui.set_out_dir(path.parent().unwrap_or(Path::new("")).to_string_lossy().as_ref().into());
 }
 
+/// Slint is built with only its PNG/JPEG decoders (keeps the exe small); other formats get a
+/// PNG preview through ffmpeg. The render always uses the original file.
+fn preview_image(path: &Path) -> Option<slint::Image> {
+    let ext = path.extension().unwrap_or_default().to_string_lossy().to_lowercase();
+    if matches!(ext.as_str(), "png" | "jpg" | "jpeg") {
+        return slint::Image::load_from_path(path).ok();
+    }
+    let out = temp_png("preview");
+    let ok = tool("ffmpeg")
+        .args(["-y", "-loglevel", "error", "-i"])
+        .arg(path)
+        .args(["-frames:v", "1"])
+        .arg(&out)
+        .status()
+        .is_ok_and(|s| s.success());
+    ok.then(|| slint::Image::load_from_path(&out).ok()).flatten()
+}
+
 fn load_image(ui: &AppWindow, path: &Path) {
-    match slint::Image::load_from_path(path) {
+    match preview_image(path).ok_or(()) {
         Ok(img) => {
             ui.set_cover(img);
             ui.set_has_cover(true);
@@ -677,14 +770,14 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = weak.clone();
         thread::spawn(move || {
             // Throttle UI updates to whole percents; the callback fires for every chunk.
-            let last = AtomicU32::new(u32::MAX);
-            let progress_ui = Mutex::new(weak.clone());
-            let result = install_ffmpeg(move |done, total| {
+            let last = std::cell::Cell::new(u32::MAX);
+            let progress_ui = weak.clone();
+            let result = install_ffmpeg(|done, total| {
                 let Some(total) = total.filter(|t| *t > 0) else { return };
                 let pct = (done * 100 / total) as u32;
-                if last.swap(pct, Ordering::Relaxed) != pct {
+                if last.replace(pct) != pct {
                     let msg = format!("Downloading FFmpeg… {} / {} MB", done >> 20, total >> 20);
-                    let _ = progress_ui.lock().unwrap().upgrade_in_event_loop(move |ui| {
+                    let _ = progress_ui.upgrade_in_event_loop(move |ui| {
                         ui.set_ffmpeg_progress(pct as f32 / 100.0);
                         ui.set_ffmpeg_msg(if pct == 100 { "Unpacking…".into() } else { msg.into() });
                     });
@@ -701,8 +794,11 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
-    // Updates
-    if updater().is_none() {
+    // Updates. Clean up the exe a previous self-update moved aside.
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = fs::remove_file(exe.with_extension("old"));
+    }
+    if repo().is_none() {
         app.set_update_state("disabled".into());
     } else if app.get_auto_update() {
         check_for_update(app.as_weak());
@@ -719,7 +815,7 @@ fn main() -> Result<(), slint::PlatformError> {
         weak.unwrap().set_update_state("downloading".into());
         let weak = weak.clone();
         thread::spawn(move || {
-            let ok = updater().is_some_and(|u| u.update().is_ok());
+            let ok = matches!(newer_release(), Ok(Some((_, url))) if install_update(&url).is_ok());
             let _ = weak.upgrade_in_event_loop(move |ui| {
                 ui.set_update_state(if ok { "ready" } else { "failed" }.into());
             });
@@ -786,6 +882,43 @@ mod tests {
     }
 
     #[test]
+    fn reads_github_release_json() {
+        let json = r#"{"tag_name": "v0.2.0", "assets": [{"browser_download_url":"https://x/a.txt"},
+            {"browser_download_url": "https://x/rmpyou-x86_64-pc-windows-msvc.zip"}]}"#;
+        assert_eq!(json_strings(json, "tag_name"), ["v0.2.0"]);
+        assert_eq!(json_strings(json, "browser_download_url")[1], "https://x/rmpyou-x86_64-pc-windows-msvc.zip");
+        assert!(is_newer("0.2.0", "0.1.9"));
+        assert!(is_newer("1.10.0", "1.9.3"));
+        assert!(!is_newer("0.1.0", "0.1.0"));
+        assert!(!is_newer("0.0.9", "0.1.0"));
+    }
+
+    #[test]
+    fn unzips_with_windows_tar() {
+        let dir = std::env::temp_dir().join("rmpyou-test-zip");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src/bin")).unwrap();
+        fs::write(dir.join("src/bin/hello.txt"), "hi").unwrap();
+        let tar = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/tar.exe");
+        // bsdtar picks zip format from the .zip extension with -a
+        assert!(Command::new(tar).args(["-a", "-cf"]).arg(dir.join("a.zip")).arg("-C").arg(&dir).arg("src").status().unwrap().success());
+        fs::create_dir_all(dir.join("out")).unwrap();
+        unzip(&dir.join("a.zip"), &dir.join("out")).unwrap();
+        assert_eq!(fs::read_to_string(dir.join("out/src/bin/hello.txt")).unwrap(), "hi");
+    }
+
+    #[test]
+    fn previews_non_native_formats() {
+        let dir = std::env::temp_dir().join("rmpyou-test");
+        fs::create_dir_all(&dir).unwrap();
+        for ext in ["webp", "bmp", "png"] {
+            let file = dir.join(format!("p.{ext}"));
+            assert!(tool("ffmpeg").args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240", "-frames:v", "1"]).arg(&file).status().unwrap().success());
+            assert_eq!(preview_image(&file).unwrap().size().width, 320, "{ext}");
+        }
+    }
+
+    #[test]
     fn parses_colorhunt_feed() {
         let json = r#"[{"code":"fff5f5f7d6d0e2b4bd4a4a4a","likes":"2550","date":"4 weeks"},{"code":"bad","likes":"1"},{"code":"8b9a6ef7f2ebeae2d6eeeeee","likes":"1237"}]"#;
         let p = parse_palettes(json);
@@ -797,14 +930,32 @@ mod tests {
 
 #[cfg(test)]
 mod live {
-    /// Hits colorhunt.co; run with `cargo test -- --ignored`.
+    use super::*;
+
+    /// Hits the network (colorhunt.co, GitHub); run with `cargo test -- --ignored`.
     #[test]
     #[ignore]
-    fn fetches_colorhunt() {
+    fn network_over_windows_tls() {
         for sort in 0..3 {
-            let p = super::fetch_palettes(sort, 0).unwrap();
+            let p = fetch_palettes(sort, 0).unwrap();
             assert!(p.len() >= 10, "sort {sort}: {} palettes", p.len());
         }
-        assert_ne!(super::fetch_palettes(1, 0).unwrap()[0], super::fetch_palettes(1, 1).unwrap()[0]);
+        assert_ne!(fetch_palettes(1, 0).unwrap()[0], fetch_palettes(1, 1).unwrap()[0]);
+
+        let body = http()
+            .get("https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest")
+            .call()
+            .unwrap()
+            .body_mut()
+            .read_to_string()
+            .unwrap();
+        assert!(!json_strings(&body, "tag_name").is_empty());
+        assert!(json_strings(&body, "browser_download_url").iter().any(|u| u.ends_with(".zip")));
+
+        // Redirecting binary download with progress
+        let dest = std::env::temp_dir().join("rmpyou-test-avatar.png");
+        let last = std::cell::Cell::new(0);
+        download("https://github.com/tedlaz.png", &dest, |done, _| last.set(done)).unwrap();
+        assert!(last.get() > 1000 && fs::metadata(&dest).unwrap().len() == last.get());
     }
 }
