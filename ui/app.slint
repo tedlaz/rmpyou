@@ -26,16 +26,6 @@ component Label inherits Text {
     letter-spacing: 1.4px;
 }
 
-component Card inherits Rectangle {
-    background: Theme.p.card;
-    border-radius: 20px;
-    border-width: 1px;
-    border-color: Theme.p.border;
-    drop-shadow-blur: 30px;
-    drop-shadow-offset-y: 10px;
-    drop-shadow-color: #00000030;
-    animate background, border-color { duration: 250ms; }
-}
 
 component Button inherits Rectangle {
     in property <string> text;
@@ -558,12 +548,12 @@ export component AppWindow inherits Window {
         }
 
         VerticalLayout {
-            padding: 24px;
-            spacing: 16px;
+            padding: 0px;
+            spacing: 0px;
 
             // FFmpeg missing banner
-            if !root.ffmpeg-ok: Card {
-                border-color: Theme.p.accent;
+            if !root.ffmpeg-ok: Rectangle {
+                background: Theme.p.accent.transparentize(85%);
                 VerticalLayout {
                     padding: 16px;
                     spacing: 10px;
@@ -605,11 +595,12 @@ export component AppWindow inherits Window {
                 }
             }
 
-            Card {
+            Rectangle {
                 vertical-stretch: 1;
                 VerticalLayout {
-                    padding: 24px;
-                    spacing: 10px;
+                    padding: 18px;
+                    padding-top: 14px;
+                    spacing: 8px;
 
                     Label { text: "AUDIO"; }
                     Field {
@@ -619,7 +610,7 @@ export component AppWindow inherits Window {
                         clicked => { root.pick-audio(); }
                     }
 
-                    Rectangle { height: 6px; }
+                    Rectangle { height: 2px; }
                     HorizontalLayout {
                         spacing: 12px;
                         Label { text: "ARTWORK"; }
@@ -669,7 +660,7 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    Rectangle { height: 6px; }
+                    Rectangle { height: 2px; }
                     Label { text: "BACKGROUND FILL"; }
                     HorizontalLayout {
                         spacing: 8px;
@@ -723,7 +714,7 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    Rectangle { height: 6px; }
+                    Rectangle { height: 2px; }
                     Label { text: "RESOLUTION"; }
                     HorizontalLayout {
                         spacing: 8px;
@@ -734,7 +725,7 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    Rectangle { height: 6px; }
+                    Rectangle { height: 2px; }
                     Label { text: "SAVE TO"; }
                     Field {
                         title: root.out-name == "" ? "Pick where to save" : root.out-name;
@@ -743,7 +734,7 @@ export component AppWindow inherits Window {
                         clicked => { root.pick-output(); }
                     }
 
-                    Rectangle { height: 8px; }
+                    Rectangle { height: 4px; }
                     if root.status != "": HorizontalLayout {
                         spacing: 12px;
                         Text {
