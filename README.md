@@ -2,8 +2,10 @@
 
 Turn an **MP3** and a **cover image** into a video ready to upload to YouTube.
 
+- Drag and drop an MP3 or image anywhere on the window
 - Live 16:9 preview; the image is letterboxed, never cropped
-- 720p / 1080p / 4K output: H.264 High, yuv420p, AAC 320k 48 kHz, faststart MP4 (YouTube's recommended settings)
+- Custom frameless title bar
+- 720p / 1080p / 4K output: H.264 still image + your original MP3 audio copied bit-for-bit (no re-encode, no quality loss). The file is only ~10% bigger than the MP3
 - 4 themes (Midnight, Carbon, Daylight, Sakura), remembered between runs
 - Updates itself from GitHub Releases
 - Pure CPU: Slint software renderer, no GPU needed

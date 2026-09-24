@@ -9,6 +9,10 @@ use std::{
 };
 
 use slint::ComponentHandle;
+use slint::winit_030::{
+    EventResult, WinitWindowAccessor,
+    winit::{event::WindowEvent, window::ResizeDirection},
+};
 
 slint::slint! {
     struct Palette {
@@ -125,8 +129,42 @@ slint::slint! {
         }
     }
 
+    component Grip inherits TouchArea {
+        in property <int> dir;
+        callback start(int);
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left { root.start(root.dir); }
+        }
+    }
+
+    component WinButton inherits Rectangle {
+        in property <string> icon;
+        in property <string> label;
+        in property <bool> danger;
+        callback clicked;
+        width: 46px;
+        background: ta.pressed ? (danger ? #b40f1e : Theme.p.field)
+            : ta.has-hover ? (danger ? #e81123 : Theme.p.border) : transparent;
+        animate background { duration: 120ms; }
+        accessible-role: button;
+        accessible-label: label;
+        accessible-action-default => { clicked(); }
+        ta := TouchArea { clicked => { root.clicked(); } }
+        Path {
+            width: 10px;
+            height: 10px;
+            viewbox-width: 10;
+            viewbox-height: 10;
+            commands: root.icon;
+            fill: transparent;
+            stroke: ta.has-hover && root.danger ? white : Theme.p.text;
+            stroke-width: 1.2px;
+        }
+    }
+
     export component AppWindow inherits Window {
         title: "rmpyou — MP3 to YouTube video";
+        no-frame: true;
         preferred-width: 1000px;
         preferred-height: 660px;
         min-width: 820px;
@@ -150,6 +188,8 @@ slint::slint! {
         in property <string> status;
         in property <string> update-version;
         in property <string> update-state; // "", available, downloading, ready, failed
+        in property <bool> is-max;
+        in property <bool> dragging;
 
         callback pick-image();
         callback pick-audio();
@@ -159,97 +199,134 @@ slint::slint! {
         callback do-update();
         callback restart();
         callback theme-changed(int);
+        callback start-drag();
+        callback start-resize(int);
+        callback minimize();
+        callback toggle-maximize();
+        callback close-window();
 
         property <[string]> res-labels: ["720p", "1080p", "4K"];
         property <bool> can-render: has-cover && audio-path != "" && out-path != "" && !rendering;
+        property <length> grip: 6px;
 
         VerticalLayout {
-            padding: 28px;
-            spacing: 22px;
-
-            // Header
-            HorizontalLayout {
-                spacing: 14px;
+            // Custom title bar
+            Rectangle {
+                height: 56px;
+                background: Theme.p.card;
+                animate background { duration: 250ms; }
+                TouchArea {
+                    moved => { if self.pressed { root.start-drag(); } }
+                    double-clicked => { root.toggle-maximize(); }
+                }
                 Rectangle {
-                    width: 46px;
-                    height: 46px;
-                    border-radius: 13px;
-                    background: Theme.p.accent;
-                    drop-shadow-blur: 18px;
-                    drop-shadow-color: Theme.p.accent2.transparentize(40%);
-                    Path {
-                        width: 16px;
-                        height: 18px;
-                        x: 17px;
-                        fill: white;
-                        commands: "M 0 0 L 16 9 L 0 18 Z";
-                    }
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: Theme.p.border;
                 }
-                VerticalLayout {
-                    alignment: center;
-                    Text { text: "rmpyou"; color: Theme.p.text; font-size: 22px; font-weight: 800; }
-                    Text { text: "MP3 + artwork → YouTube-ready video"; color: Theme.p.muted; font-size: 13px; }
-                }
-                Rectangle { horizontal-stretch: 1; }
-
-                if root.update-state != "": Rectangle {
-                    border-radius: 12px;
-                    background: Theme.p.field;
-                    border-width: 1px;
-                    border-color: Theme.p.accent;
-                    HorizontalLayout {
-                        padding: 5px;
-                        padding-left: 14px;
-                        spacing: 10px;
-                        Text {
-                            vertical-alignment: center;
-                            color: Theme.p.text;
-                            font-size: 13px;
-                            text: root.update-state == "available" ? "v" + root.update-version + " is available"
-                                : root.update-state == "downloading" ? "Downloading update…"
-                                : root.update-state == "ready" ? "Update installed"
-                                : "Update failed";
-                        }
-                        if root.update-state == "available" || root.update-state == "ready": Button {
-                            text: root.update-state == "available" ? "Update" : "Restart";
-                            clicked => { if root.update-state == "available" { root.do-update(); } else { root.restart(); } }
+                HorizontalLayout {
+                    padding-left: 16px;
+                    spacing: 12px;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 32px;
+                            height: 32px;
+                            border-radius: 9px;
+                            background: Theme.p.accent;
+                            drop-shadow-blur: 14px;
+                            drop-shadow-color: Theme.p.accent2.transparentize(35%);
+                            Path {
+                                width: 11px;
+                                height: 12px;
+                                x: 12px;
+                                fill: white;
+                                commands: "M 0 0 L 11 6 L 0 12 Z";
+                            }
                         }
                     }
-                }
+                    VerticalLayout {
+                        alignment: center;
+                        Text { text: "rmpyou"; color: Theme.p.text; font-size: 15px; font-weight: 800; }
+                        Text { text: "MP3 + artwork → YouTube-ready video"; color: Theme.p.muted; font-size: 11px; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
 
-                VerticalLayout {
-                    alignment: center;
-                    spacing: 6px;
-                    Label { text: "THEME · " + Theme.names[Theme.index]; horizontal-alignment: right; }
+                    if root.update-state != "": VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            border-radius: 10px;
+                            background: Theme.p.field;
+                            border-width: 1px;
+                            border-color: Theme.p.accent;
+                            HorizontalLayout {
+                                padding: 3px;
+                                padding-left: 12px;
+                                spacing: 10px;
+                                Text {
+                                    vertical-alignment: center;
+                                    color: Theme.p.text;
+                                    font-size: 12px;
+                                    text: root.update-state == "available" ? "v" + root.update-version + " is available"
+                                        : root.update-state == "downloading" ? "Downloading update…"
+                                        : root.update-state == "ready" ? "Update installed"
+                                        : "Update failed";
+                                }
+                                if root.update-state == "available" || root.update-state == "ready": Button {
+                                    min-height: 30px;
+                                    text: root.update-state == "available" ? "Update" : "Restart";
+                                    clicked => { if root.update-state == "available" { root.do-update(); } else { root.restart(); } }
+                                }
+                            }
+                        }
+                    }
+
                     HorizontalLayout {
                         spacing: 8px;
-                        alignment: end;
-                        for name[i] in Theme.names: Rectangle {
-                            width: 26px;
-                            height: 26px;
-                            border-radius: 13px;
-                            background: Theme.palettes[i].accent;
-                            border-width: Theme.index == i ? 3px : 0px;
-                            border-color: Theme.p.text;
-                            accessible-role: button;
-                            accessible-label: name + " theme";
-                            accessible-action-default => { Theme.index = i; root.theme-changed(i); }
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        for name[i] in Theme.names: VerticalLayout {
+                            alignment: center;
                             Rectangle {
-                                width: 10px;
-                                height: 10px;
-                                border-radius: 5px;
-                                background: Theme.palettes[i].bg1;
-                            }
-                            TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { Theme.index = i; root.theme-changed(i); }
+                                width: 20px;
+                                height: 20px;
+                                border-radius: 10px;
+                                background: Theme.palettes[i].accent;
+                                border-width: Theme.index == i ? 2px : 0px;
+                                border-color: Theme.p.text;
+                                accessible-role: button;
+                                accessible-label: name + " theme";
+                                accessible-action-default => { Theme.index = i; root.theme-changed(i); }
+                                Rectangle {
+                                    width: 8px;
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: Theme.palettes[i].bg1;
+                                }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { Theme.index = i; root.theme-changed(i); }
+                                }
                             }
                         }
                     }
+
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle { width: 1px; height: 24px; background: Theme.p.border; }
+                    }
+                    WinButton { label: "Minimize"; icon: "M 0 5 L 10 5"; clicked => { root.minimize(); } }
+                    WinButton {
+                        label: root.is-max ? "Restore" : "Maximize";
+                        icon: root.is-max ? "M 0 2 L 8 2 L 8 10 L 0 10 Z M 2 2 L 2 0 L 10 0 L 10 8 L 8 8" : "M 0 0 L 10 0 L 10 10 L 0 10 Z";
+                        clicked => { root.toggle-maximize(); }
+                    }
+                    WinButton { label: "Close"; danger: true; icon: "M 0 0 L 10 10 M 10 0 L 0 10"; clicked => { root.close-window(); } }
                 }
             }
 
             HorizontalLayout {
+                padding: 24px;
                 spacing: 22px;
 
                 // Artwork / live 16:9 preview
@@ -292,7 +369,7 @@ slint::slint! {
                                     spacing: 8px;
                                     Text { text: "+"; color: Theme.p.accent; font-size: 44px; font-weight: 300; horizontal-alignment: center; }
                                     Text { text: "Choose cover image"; color: Theme.p.text; font-size: 17px; font-weight: 600; horizontal-alignment: center; }
-                                    Text { text: "PNG · JPG · WEBP · BMP — letterboxed to 16:9"; color: Theme.p.muted; font-size: 12px; horizontal-alignment: center; }
+                                    Text { text: "or drop one anywhere · PNG, JPG, WEBP, BMP · letterboxed to 16:9"; color: Theme.p.muted; font-size: 12px; horizontal-alignment: center; }
                                 }
                                 cover-ta := TouchArea {
                                     mouse-cursor: pointer;
@@ -314,7 +391,7 @@ slint::slint! {
 
                         Label { text: "AUDIO"; }
                         Field {
-                            title: root.audio-name == "" ? "Choose an MP3 file" : root.audio-name;
+                            title: root.audio-name == "" ? "Choose or drop an MP3" : root.audio-name;
                             subtitle: root.audio-info;
                             action: root.audio-name == "" ? "Browse" : "Change";
                             clicked => { root.pick-audio(); }
@@ -388,10 +465,60 @@ slint::slint! {
                 }
             }
         }
+
+        // Thin window outline (frameless windows have no OS border)
+        if !root.is-max: Rectangle {
+            border-width: 1px;
+            border-color: Theme.p.border;
+        }
+
+        // Resize grips: E, N, NE, NW, S, SE, SW, W (matches RESIZE_DIRS in Rust)
+        if !root.is-max: Grip { dir: 0; x: root.width - grip; y: grip; width: grip; height: root.height - 2 * grip; mouse-cursor: ew-resize; start(d) => { root.start-resize(d); } }
+        if !root.is-max: Grip { dir: 1; x: grip; y: 0; width: root.width - 2 * grip; height: grip; mouse-cursor: ns-resize; start(d) => { root.start-resize(d); } }
+        if !root.is-max: Grip { dir: 2; x: root.width - grip; y: 0; width: grip; height: grip; mouse-cursor: nesw-resize; start(d) => { root.start-resize(d); } }
+        if !root.is-max: Grip { dir: 3; x: 0; y: 0; width: grip; height: grip; mouse-cursor: nwse-resize; start(d) => { root.start-resize(d); } }
+        if !root.is-max: Grip { dir: 4; x: grip; y: root.height - grip; width: root.width - 2 * grip; height: grip; mouse-cursor: ns-resize; start(d) => { root.start-resize(d); } }
+        if !root.is-max: Grip { dir: 5; x: root.width - grip; y: root.height - grip; width: grip; height: grip; mouse-cursor: nwse-resize; start(d) => { root.start-resize(d); } }
+        if !root.is-max: Grip { dir: 6; x: 0; y: root.height - grip; width: grip; height: grip; mouse-cursor: nesw-resize; start(d) => { root.start-resize(d); } }
+        if !root.is-max: Grip { dir: 7; x: 0; y: grip; width: grip; height: root.height - 2 * grip; mouse-cursor: ew-resize; start(d) => { root.start-resize(d); } }
+
+        // Drag-and-drop overlay
+        if root.dragging: Rectangle {
+            background: Theme.p.bg1.transparentize(12%);
+            Rectangle {
+                x: 24px;
+                y: 24px;
+                width: parent.width - 48px;
+                height: parent.height - 48px;
+                border-radius: 24px;
+                border-width: 3px;
+                border-color: Theme.p.accent;
+                background: Theme.p.accent.transparentize(88%);
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 10px;
+                    Text { text: "+"; color: Theme.p.accent; font-size: 64px; font-weight: 300; horizontal-alignment: center; }
+                    Text { text: "Drop it here"; color: Theme.p.text; font-size: 28px; font-weight: 800; horizontal-alignment: center; }
+                    Text { text: "MP3 becomes the audio · PNG, JPG, WEBP or BMP becomes the artwork"; color: Theme.p.muted; font-size: 14px; horizontal-alignment: center; }
+                }
+            }
+        }
     }
 }
 
 const RESOLUTIONS: [(u32, u32); 3] = [(1280, 720), (1920, 1080), (3840, 2160)];
+const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp"];
+/// Index order matches the `Grip { dir: N }` elements in the UI.
+const RESIZE_DIRS: [ResizeDirection; 8] = [
+    ResizeDirection::East,
+    ResizeDirection::North,
+    ResizeDirection::NorthEast,
+    ResizeDirection::NorthWest,
+    ResizeDirection::South,
+    ResizeDirection::SouthEast,
+    ResizeDirection::SouthWest,
+    ResizeDirection::West,
+];
 
 /// ffmpeg/ffprobe next to our exe (release zip bundles them), else from PATH.
 fn tool(name: &str) -> Command {
@@ -426,7 +553,8 @@ fn fmt_time(secs: f64) -> String {
     }
 }
 
-/// Encode still image + audio into a YouTube-recommended MP4 (H.264 High yuv420p, AAC 48 kHz, faststart).
+/// Encode still image + audio into a YouTube-ready MP4. The MP3 stream is copied untouched (no quality
+/// loss, no size growth) and the still is encoded at 2 fps, so the file ends up barely larger than the MP3.
 fn render(
     image: &Path,
     audio: &Path,
@@ -439,13 +567,13 @@ fn render(
         "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p"
     );
     let mut cmd = tool("ffmpeg");
-    cmd.args(["-y", "-hide_banner", "-loglevel", "error", "-loop", "1", "-framerate", "1", "-i"])
+    cmd.args(["-y", "-hide_banner", "-loglevel", "error", "-loop", "1", "-framerate", "2", "-i"])
         .arg(image)
         .arg("-i")
         .arg(audio)
-        .args(["-map", "0:v", "-map", "1:a", "-vf", &vf, "-r", "30"])
+        .args(["-map", "0:v", "-map", "1:a", "-vf", &vf])
         .args(["-c:v", "libx264", "-tune", "stillimage", "-preset", "medium", "-crf", "18", "-profile:v", "high"])
-        .args(["-c:a", "aac", "-b:a", "320k", "-ar", "48000", "-movflags", "+faststart"]);
+        .args(["-c:a", "copy", "-movflags", "+faststart"]);
     if duration > 0.0 {
         cmd.args(["-t", &format!("{duration:.3}")]);
     } else {
@@ -507,6 +635,37 @@ fn set_output(ui: &AppWindow, path: &Path) {
     ui.set_out_dir(path.parent().unwrap_or(Path::new("")).to_string_lossy().as_ref().into());
 }
 
+fn load_image(ui: &AppWindow, path: &Path) {
+    match slint::Image::load_from_path(path) {
+        Ok(img) => {
+            ui.set_cover(img);
+            ui.set_has_cover(true);
+            ui.set_image_path(path.to_string_lossy().as_ref().into());
+            ui.set_done(false);
+            ui.set_status("".into());
+        }
+        Err(_) => ui.set_status("Couldn't read that image.".into()),
+    }
+}
+
+fn load_audio(ui: &AppWindow, path: &Path) {
+    let duration = probe_duration(path);
+    let mb = fs::metadata(path).map(|m| m.len() as f64 / 1_048_576.0).unwrap_or(0.0);
+    ui.set_audio_path(path.to_string_lossy().as_ref().into());
+    ui.set_audio_name(path.file_name().unwrap_or_default().to_string_lossy().as_ref().into());
+    ui.set_duration(duration.unwrap_or(0.0) as f32);
+    ui.set_audio_info(
+        match duration {
+            Some(d) => format!("{} · {mb:.1} MB", fmt_time(d)),
+            None => "ffprobe not found — progress unavailable".into(),
+        }
+        .into(),
+    );
+    set_output(ui, &path.with_extension("mp4"));
+    ui.set_done(false);
+    ui.set_status("".into());
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let app = AppWindow::new()?;
 
@@ -526,46 +685,62 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let weak = app.as_weak();
     app.on_pick_image(move || {
-        let ui = weak.unwrap();
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("Images", &["png", "jpg", "jpeg", "webp", "bmp"])
-            .pick_file()
-        else {
-            return;
-        };
-        match slint::Image::load_from_path(&path) {
-            Ok(img) => {
-                ui.set_cover(img);
-                ui.set_has_cover(true);
-                ui.set_image_path(path.to_string_lossy().as_ref().into());
-                ui.set_done(false);
-                ui.set_status("".into());
-            }
-            Err(_) => ui.set_status("Couldn't read that image.".into()),
+        if let Some(path) = rfd::FileDialog::new().add_filter("Images", IMAGE_EXTS).pick_file() {
+            load_image(&weak.unwrap(), &path);
         }
     });
 
     let weak = app.as_weak();
     app.on_pick_audio(move || {
-        let ui = weak.unwrap();
-        let Some(path) = rfd::FileDialog::new().add_filter("MP3 audio", &["mp3"]).pick_file() else {
-            return;
-        };
-        let duration = probe_duration(&path);
-        let mb = fs::metadata(&path).map(|m| m.len() as f64 / 1_048_576.0).unwrap_or(0.0);
-        ui.set_audio_path(path.to_string_lossy().as_ref().into());
-        ui.set_audio_name(path.file_name().unwrap_or_default().to_string_lossy().as_ref().into());
-        ui.set_duration(duration.unwrap_or(0.0) as f32);
-        ui.set_audio_info(
-            match duration {
-                Some(d) => format!("{} · {mb:.1} MB", fmt_time(d)),
-                None => "ffprobe not found — progress unavailable".into(),
+        if let Some(path) = rfd::FileDialog::new().add_filter("MP3 audio", &["mp3"]).pick_file() {
+            load_audio(&weak.unwrap(), &path);
+        }
+    });
+
+    // Drag-and-drop and maximize state come straight from winit window events.
+    let weak = app.as_weak();
+    app.window().on_winit_window_event(move |window, event| {
+        let Some(ui) = weak.upgrade() else { return EventResult::Propagate };
+        match event {
+            WindowEvent::HoveredFile(_) => ui.set_dragging(true),
+            WindowEvent::HoveredFileCancelled => ui.set_dragging(false),
+            WindowEvent::DroppedFile(path) => {
+                ui.set_dragging(false);
+                let ext = path.extension().unwrap_or_default().to_string_lossy().to_lowercase();
+                if ext == "mp3" {
+                    load_audio(&ui, path);
+                } else if IMAGE_EXTS.contains(&ext.as_str()) {
+                    load_image(&ui, path);
+                } else {
+                    ui.set_status("Drop an MP3 or a PNG/JPG/WEBP/BMP image.".into());
+                }
             }
-            .into(),
-        );
-        set_output(&ui, &path.with_extension("mp4"));
-        ui.set_done(false);
-        ui.set_status("".into());
+            WindowEvent::Resized(_) => ui.set_is_max(window.is_maximized()),
+            _ => {}
+        }
+        EventResult::Propagate
+    });
+
+    let weak = app.as_weak();
+    app.on_start_drag(move || {
+        weak.unwrap().window().with_winit_window(|w| w.drag_window().ok());
+    });
+    let weak = app.as_weak();
+    app.on_start_resize(move |dir| {
+        let dir = RESIZE_DIRS[dir.clamp(0, 7) as usize];
+        weak.unwrap().window().with_winit_window(|w| w.drag_resize_window(dir).ok());
+    });
+    let weak = app.as_weak();
+    app.on_minimize(move || weak.unwrap().window().set_minimized(true));
+    let weak = app.as_weak();
+    app.on_toggle_maximize(move || {
+        let ui = weak.unwrap();
+        let max = !ui.window().is_maximized();
+        ui.window().set_maximized(max);
+        ui.set_is_max(max);
+    });
+    app.on_close_window(|| {
+        let _ = slint::quit_event_loop();
     });
 
     let weak = app.as_weak();
@@ -687,7 +862,7 @@ mod tests {
             .unwrap();
         let info = String::from_utf8_lossy(&info.stdout);
         assert!(info.contains("h264,1920,1080,yuv420p"), "{info}");
-        assert!(info.contains("aac,48000"), "{info}");
+        assert!(info.contains("mp3,"), "audio must be stream-copied: {info}");
         assert!((probe_duration(&out).unwrap() - dur).abs() < 0.2);
     }
 }
