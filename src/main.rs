@@ -345,6 +345,25 @@ fn check_for_update(weak: slint::Weak<AppWindow>) {
 
 // ───────────── UI glue ─────────────
 
+/// Windows 11 rounded corners (+ native border) for our frameless window. Returns false where
+/// unsupported (Windows 10), so the UI draws its own outline instead.
+#[cfg(windows)]
+fn round_corners(window: &slint::winit_030::winit::window::Window) -> bool {
+    use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    #[link(name = "dwmapi")]
+    unsafe extern "system" {
+        fn DwmSetWindowAttribute(hwnd: isize, attr: u32, value: *const u32, size: u32) -> i32;
+    }
+    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+    const DWMWCP_ROUND: u32 = 2;
+    if let Ok(RawWindowHandle::Win32(h)) = window.window_handle().map(|h| h.as_raw()) {
+        // Safety: valid HWND from winit; attribute value is a u32 as documented. Fails harmlessly on Windows 10.
+        let hr = unsafe { DwmSetWindowAttribute(h.hwnd.get(), DWMWA_WINDOW_CORNER_PREFERENCE, &DWMWCP_ROUND, 4) };
+        return hr == 0;
+    }
+    false
+}
+
 fn open(target: &str) {
     #[cfg(windows)]
     let _ = Command::new("explorer").arg(target).spawn();
@@ -461,7 +480,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_status("Drop an MP3 or a PNG/JPG/WEBP/BMP image.".into());
                 }
             }
-            WindowEvent::Resized(_) => ui.set_is_max(window.is_maximized()),
+            WindowEvent::Resized(_) => {
+                ui.set_is_max(window.is_maximized());
+                #[cfg(windows)]
+                ui.set_native_frame(window.with_winit_window(round_corners).unwrap_or(false));
+            }
             _ => {}
         }
         EventResult::Propagate

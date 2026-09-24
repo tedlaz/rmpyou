@@ -406,6 +406,7 @@ export component AppWindow inherits Window {
     // Window
     in property <bool> is-max;
     in property <bool> dragging;
+    in property <bool> native-frame; // OS draws rounded corners + border (Windows 11)
     in-out property <bool> settings-open;
 
     // Settings / about
@@ -1080,7 +1081,7 @@ export component AppWindow inherits Window {
     }
 
     // Thin window outline (frameless windows have no OS border)
-    if !root.is-max: Rectangle {
+    if !root.is-max && !root.native-frame: Rectangle {
         border-width: 1px;
         border-color: Theme.p.border;
     }
