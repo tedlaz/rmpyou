@@ -5,524 +5,20 @@ use std::{
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::{
+        Mutex,
+        atomic::{AtomicU32, Ordering},
+    },
     thread,
 };
 
-use slint::ComponentHandle;
 use slint::winit_030::{
     EventResult, WinitWindowAccessor,
     winit::{event::WindowEvent, window::ResizeDirection},
 };
+use slint::{Color, ComponentHandle};
 
-slint::slint! {
-    struct Palette {
-        bg1: color, bg2: color, card: color, border: color, field: color,
-        text: color, muted: color, accent: color, accent2: color,
-    }
-
-    export global Theme {
-        in-out property <int> index: 0;
-        out property <[string]> names: ["Midnight", "Carbon", "Daylight", "Sakura"];
-        out property <[Palette]> palettes: [
-            { bg1: #0f0c29, bg2: #302b63, card: #ffffff12, border: #ffffff24, field: #00000038,
-              text: #f5f3ff, muted: #a5a1c9, accent: #8b5cf6, accent2: #ec4899 },
-            { bg1: #0b0f14, bg2: #1c2530, card: #ffffff0f, border: #ffffff1f, field: #00000045,
-              text: #e6edf3, muted: #8b98a5, accent: #14b8a6, accent2: #22d3ee },
-            { bg1: #f5f7ff, bg2: #dbe4ff, card: #ffffffd0, border: #1d4ed826, field: #eef2ff,
-              text: #0f172a, muted: #64748b, accent: #2f63eb, accent2: #7c3aed },
-            { bg1: #fff5f7, bg2: #ffdde8, card: #ffffffd0, border: #be185d26, field: #fff1f5,
-              text: #3b0a1f, muted: #9d5c77, accent: #e11d48, accent2: #f97316 },
-        ];
-        out property <Palette> p: palettes[index];
-    }
-
-    component Label inherits Text {
-        color: Theme.p.muted;
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 1.4px;
-    }
-
-    component Card inherits Rectangle {
-        background: Theme.p.card;
-        border-radius: 20px;
-        border-width: 1px;
-        border-color: Theme.p.border;
-        drop-shadow-blur: 30px;
-        drop-shadow-offset-y: 10px;
-        drop-shadow-color: #00000030;
-        animate background, border-color { duration: 250ms; }
-    }
-
-    component Button inherits Rectangle {
-        in property <string> text;
-        callback clicked;
-        min-height: 38px;
-        border-radius: 10px;
-        background: ta.has-hover ? Theme.p.border : Theme.p.field;
-        border-width: 1px;
-        border-color: Theme.p.border;
-        opacity: ta.pressed ? 0.8 : 1;
-        accessible-role: button;
-        accessible-label: text;
-        accessible-action-default => { clicked(); }
-        ta := TouchArea {
-            mouse-cursor: pointer;
-            clicked => { root.clicked(); }
-        }
-        HorizontalLayout {
-            padding-left: 18px;
-            padding-right: 18px;
-            Text {
-                text: root.text;
-                color: Theme.p.text;
-                font-size: 13px;
-                font-weight: 600;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
-    }
-
-    // Primary action; while busy the button itself becomes the progress bar.
-    component RenderButton inherits Rectangle {
-        in property <bool> enabled;
-        in property <bool> busy;
-        in property <bool> done;
-        in property <float> progress;
-        callback clicked;
-        height: 58px;
-        border-radius: 14px;
-        clip: true;
-        background: busy ? Theme.p.accent.darker(45%) : Theme.p.accent;
-        opacity: !enabled && !busy ? 0.4 : ta.pressed ? 0.85 : 1;
-        drop-shadow-blur: enabled || busy ? (ta.has-hover ? 28px : 18px) : 0px;
-        drop-shadow-color: Theme.p.accent2.transparentize(35%);
-        animate drop-shadow-blur { duration: 200ms; }
-        animate opacity { duration: 150ms; }
-        accessible-role: button;
-        accessible-label: busy ? "Rendering " + Math.round(progress * 100) + " percent" : "Render video";
-        accessible-action-default => { if enabled { clicked(); } }
-        if busy: Rectangle {
-            x: 0;
-            width: parent.width * root.progress;
-            border-radius: 14px;
-            height: parent.height;
-            background: Theme.p.accent;
-            animate width { duration: 300ms; easing: ease-out; }
-        }
-        ta := TouchArea {
-            enabled: root.enabled;
-            mouse-cursor: root.enabled ? pointer : default;
-            clicked => { root.clicked(); }
-        }
-        Text {
-            text: root.busy ? "Rendering…  " + Math.round(root.progress * 100) + "%"
-                : root.done ? "Render again" : "Render video";
-            color: white;
-            font-size: 17px;
-            font-weight: 700;
-        }
-    }
-
-    component Field inherits Rectangle {
-        in property <string> title;
-        in property <string> subtitle;
-        in property <string> action;
-        callback clicked;
-        min-height: 62px;
-        border-radius: 12px;
-        background: ta.has-hover ? Theme.p.border : Theme.p.field;
-        border-width: 1px;
-        border-color: ta.has-hover ? Theme.p.accent : Theme.p.border;
-        animate border-color { duration: 150ms; }
-        accessible-role: button;
-        accessible-label: action + " " + title;
-        accessible-action-default => { clicked(); }
-        ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
-        HorizontalLayout {
-            padding: 14px;
-            spacing: 12px;
-            VerticalLayout {
-                alignment: center;
-                horizontal-stretch: 1;
-                spacing: 3px;
-                Text { text: root.title; color: Theme.p.text; font-size: 14px; font-weight: 600; overflow: elide; }
-                if root.subtitle != "": Text { text: root.subtitle; color: Theme.p.muted; font-size: 12px; overflow: elide; }
-            }
-            Text {
-                text: root.action;
-                color: Theme.p.accent;
-                font-size: 13px;
-                font-weight: 700;
-                vertical-alignment: center;
-                horizontal-stretch: 0;
-            }
-        }
-    }
-
-    component Grip inherits TouchArea {
-        in property <int> dir;
-        callback start(int);
-        pointer-event(e) => {
-            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left { root.start(root.dir); }
-        }
-    }
-
-    component WinButton inherits Rectangle {
-        in property <string> icon;
-        in property <string> label;
-        in property <bool> danger;
-        callback clicked;
-        width: 46px;
-        background: ta.pressed ? (danger ? #b40f1e : Theme.p.field)
-            : ta.has-hover ? (danger ? #e81123 : Theme.p.border) : transparent;
-        animate background { duration: 120ms; }
-        accessible-role: button;
-        accessible-label: label;
-        accessible-action-default => { clicked(); }
-        ta := TouchArea { clicked => { root.clicked(); } }
-        Path {
-            width: 10px;
-            height: 10px;
-            viewbox-width: 10;
-            viewbox-height: 10;
-            commands: root.icon;
-            fill: transparent;
-            stroke: ta.has-hover && root.danger ? white : Theme.p.text;
-            stroke-width: 1.2px;
-        }
-    }
-
-    export component AppWindow inherits Window {
-        title: "rmpyou — MP3 to YouTube video";
-        no-frame: true;
-        preferred-width: 640px;
-        preferred-height: 840px;
-        min-width: 520px;
-        min-height: 720px;
-        background: @linear-gradient(135deg, Theme.p.bg1 0%, Theme.p.bg2 100%);
-
-        in property <image> cover;
-        in property <bool> has-cover;
-        in-out property <string> image-path;
-        in-out property <string> audio-path;
-        in property <string> audio-name;
-        in property <string> audio-info;
-        in-out property <float> duration;
-        in-out property <int> resolution: 1;
-        in-out property <string> out-path;
-        in property <string> out-name;
-        in property <string> out-dir;
-        in property <float> progress;
-        in property <bool> rendering;
-        in property <bool> done;
-        in property <string> status;
-        in property <string> update-version;
-        in property <string> update-state; // "", available, downloading, ready, failed
-        in property <bool> is-max;
-        in property <bool> dragging;
-
-        callback pick-image();
-        callback pick-audio();
-        callback pick-output();
-        callback render();
-        callback open-folder();
-        callback do-update();
-        callback restart();
-        callback theme-changed(int);
-        callback start-drag();
-        callback start-resize(int);
-        callback minimize();
-        callback toggle-maximize();
-        callback close-window();
-
-        property <[string]> res-labels: ["720p", "1080p", "4K"];
-        property <bool> can-render: has-cover && audio-path != "" && out-path != "" && !rendering;
-        property <length> grip: 6px;
-
-        VerticalLayout {
-            // Custom title bar
-            Rectangle {
-                height: 56px;
-                background: Theme.p.card;
-                animate background { duration: 250ms; }
-                TouchArea {
-                    moved => { if self.pressed { root.start-drag(); } }
-                    double-clicked => { root.toggle-maximize(); }
-                }
-                Rectangle {
-                    y: parent.height - 1px;
-                    height: 1px;
-                    background: Theme.p.border;
-                }
-                HorizontalLayout {
-                    padding-left: 16px;
-                    spacing: 12px;
-                    VerticalLayout {
-                        alignment: center;
-                        Rectangle {
-                            width: 32px;
-                            height: 32px;
-                            border-radius: 9px;
-                            background: Theme.p.accent;
-                            drop-shadow-blur: 14px;
-                            drop-shadow-color: Theme.p.accent2.transparentize(35%);
-                            Path {
-                                width: 11px;
-                                height: 12px;
-                                x: 12px;
-                                fill: white;
-                                commands: "M 0 0 L 11 6 L 0 12 Z";
-                            }
-                        }
-                    }
-                    VerticalLayout {
-                        alignment: center;
-                        Text { text: "rmpyou"; color: Theme.p.text; font-size: 15px; font-weight: 800; }
-                        Text { text: "MP3 + artwork → YouTube-ready video"; color: Theme.p.muted; font-size: 11px; }
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-
-                    if root.update-state != "": VerticalLayout {
-                        alignment: center;
-                        Rectangle {
-                            border-radius: 10px;
-                            background: Theme.p.field;
-                            border-width: 1px;
-                            border-color: Theme.p.accent;
-                            HorizontalLayout {
-                                padding: 3px;
-                                padding-left: 12px;
-                                spacing: 10px;
-                                Text {
-                                    vertical-alignment: center;
-                                    color: Theme.p.text;
-                                    font-size: 12px;
-                                    text: root.update-state == "available" ? "v" + root.update-version + " is available"
-                                        : root.update-state == "downloading" ? "Downloading update…"
-                                        : root.update-state == "ready" ? "Update installed"
-                                        : "Update failed";
-                                }
-                                if root.update-state == "available" || root.update-state == "ready": Button {
-                                    min-height: 30px;
-                                    text: root.update-state == "available" ? "Update" : "Restart";
-                                    clicked => { if root.update-state == "available" { root.do-update(); } else { root.restart(); } }
-                                }
-                            }
-                        }
-                    }
-
-                    HorizontalLayout {
-                        spacing: 8px;
-                        padding-left: 8px;
-                        padding-right: 8px;
-                        for name[i] in Theme.names: VerticalLayout {
-                            alignment: center;
-                            Rectangle {
-                                width: 20px;
-                                height: 20px;
-                                border-radius: 10px;
-                                background: Theme.palettes[i].accent;
-                                border-width: Theme.index == i ? 2px : 0px;
-                                border-color: Theme.p.text;
-                                accessible-role: button;
-                                accessible-label: name + " theme";
-                                accessible-action-default => { Theme.index = i; root.theme-changed(i); }
-                                Rectangle {
-                                    width: 8px;
-                                    height: 8px;
-                                    border-radius: 4px;
-                                    background: Theme.palettes[i].bg1;
-                                }
-                                TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { Theme.index = i; root.theme-changed(i); }
-                                }
-                            }
-                        }
-                    }
-
-                    VerticalLayout {
-                        alignment: center;
-                        Rectangle { width: 1px; height: 24px; background: Theme.p.border; }
-                    }
-                    WinButton { label: "Minimize"; icon: "M 0 5 L 10 5"; clicked => { root.minimize(); } }
-                    WinButton {
-                        label: root.is-max ? "Restore" : "Maximize";
-                        icon: root.is-max ? "M 0 2 L 8 2 L 8 10 L 0 10 Z M 2 2 L 2 0 L 10 0 L 10 8 L 8 8" : "M 0 0 L 10 0 L 10 10 L 0 10 Z";
-                        clicked => { root.toggle-maximize(); }
-                    }
-                    WinButton { label: "Close"; danger: true; icon: "M 0 0 L 10 10 M 10 0 L 0 10"; clicked => { root.close-window(); } }
-                }
-            }
-
-            VerticalLayout {
-                padding: 24px;
-            Card {
-                VerticalLayout {
-                    padding: 24px;
-                    spacing: 10px;
-
-                    Label { text: "AUDIO"; }
-                    Field {
-                        title: root.audio-name == "" ? "Choose or drop an MP3" : root.audio-name;
-                        subtitle: root.audio-info;
-                        action: root.audio-name == "" ? "Browse" : "Change";
-                        clicked => { root.pick-audio(); }
-                    }
-
-                    Rectangle { height: 6px; }
-                    HorizontalLayout {
-                        spacing: 12px;
-                        Label { text: "ARTWORK"; }
-                        Label {
-                            text: root.has-cover ? "PREVIEW · " + root.res-labels[root.resolution] + " · CLICK TO CHANGE" : "";
-                            horizontal-alignment: right;
-                        }
-                    }
-                    Rectangle {
-                        vertical-stretch: 1;
-                        min-height: 180px;
-                        frame := Rectangle {
-                            width: min(parent.width, parent.height * 16 / 9);
-                            height: self.width * 9 / 16;
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            border-radius: 14px;
-                            clip: true;
-                            background: root.has-cover ? black : Theme.p.field;
-                            border-width: root.has-cover ? 0px : 2px;
-                            border-color: cover-ta.has-hover ? Theme.p.accent : Theme.p.border;
-                            animate border-color { duration: 150ms; }
-                            if root.has-cover: Image {
-                                width: parent.width;
-                                height: parent.height;
-                                source: root.cover;
-                                image-fit: contain;
-                            }
-                            if !root.has-cover: VerticalLayout {
-                                alignment: center;
-                                spacing: 8px;
-                                Text { text: "+"; color: Theme.p.accent; font-size: 40px; font-weight: 300; horizontal-alignment: center; }
-                                Text { text: "Choose cover image"; color: Theme.p.text; font-size: 16px; font-weight: 600; horizontal-alignment: center; }
-                                Text { text: "or drop one anywhere · PNG, JPG, WEBP, BMP"; color: Theme.p.muted; font-size: 12px; horizontal-alignment: center; }
-                            }
-                            cover-ta := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { root.pick-image(); }
-                            }
-                        }
-                    }
-
-                    Rectangle { height: 6px; }
-                    Label { text: "RESOLUTION"; }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        for label[i] in root.res-labels: Rectangle {
-                            height: 40px;
-                            border-radius: 10px;
-                            background: root.resolution == i
-                                ? Theme.p.accent
-                                : (seg-ta.has-hover ? Theme.p.border : Theme.p.field);
-                            border-width: root.resolution == i ? 0px : 1px;
-                            border-color: Theme.p.border;
-                            accessible-role: button;
-                            accessible-label: label;
-                            accessible-action-default => { root.resolution = i; }
-                            seg-ta := TouchArea { mouse-cursor: pointer; clicked => { root.resolution = i; } }
-                            Text {
-                                text: label;
-                                color: root.resolution == i ? white : Theme.p.text;
-                                font-size: 13px;
-                                font-weight: 700;
-                            }
-                        }
-                    }
-
-                    Rectangle { height: 6px; }
-                    Label { text: "SAVE TO"; }
-                    Field {
-                        title: root.out-name == "" ? "Pick where to save" : root.out-name;
-                        subtitle: root.out-dir;
-                        action: root.out-name == "" ? "Browse" : "Change";
-                        clicked => { root.pick-output(); }
-                    }
-
-                    Rectangle { height: 8px; }
-                    if root.status != "": HorizontalLayout {
-                        spacing: 12px;
-                        Text {
-                            text: root.status;
-                            color: Theme.p.muted;
-                            font-size: 13px;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                            vertical-alignment: center;
-                        }
-                        if root.done: Text {
-                            text: "Show in folder";
-                            color: Theme.p.accent;
-                            font-size: 13px;
-                            font-weight: 700;
-                            horizontal-stretch: 0;
-                            vertical-alignment: center;
-                            accessible-role: button;
-                            accessible-action-default => { root.open-folder(); }
-                            TouchArea { mouse-cursor: pointer; clicked => { root.open-folder(); } }
-                        }
-                    }
-                    RenderButton {
-                        enabled: root.can-render;
-                        busy: root.rendering;
-                        done: root.done;
-                        progress: root.progress;
-                        clicked => { root.render(); }
-                    }
-                }
-            }
-            }
-        }
-
-        // Thin window outline (frameless windows have no OS border)
-        if !root.is-max: Rectangle {
-            border-width: 1px;
-            border-color: Theme.p.border;
-        }
-
-        // Resize grips: E, N, NE, NW, S, SE, SW, W (matches RESIZE_DIRS in Rust)
-        if !root.is-max: Grip { dir: 0; x: root.width - grip; y: grip; width: grip; height: root.height - 2 * grip; mouse-cursor: ew-resize; start(d) => { root.start-resize(d); } }
-        if !root.is-max: Grip { dir: 1; x: grip; y: 0; width: root.width - 2 * grip; height: grip; mouse-cursor: ns-resize; start(d) => { root.start-resize(d); } }
-        if !root.is-max: Grip { dir: 2; x: root.width - grip; y: 0; width: grip; height: grip; mouse-cursor: nesw-resize; start(d) => { root.start-resize(d); } }
-        if !root.is-max: Grip { dir: 3; x: 0; y: 0; width: grip; height: grip; mouse-cursor: nwse-resize; start(d) => { root.start-resize(d); } }
-        if !root.is-max: Grip { dir: 4; x: grip; y: root.height - grip; width: root.width - 2 * grip; height: grip; mouse-cursor: ns-resize; start(d) => { root.start-resize(d); } }
-        if !root.is-max: Grip { dir: 5; x: root.width - grip; y: root.height - grip; width: grip; height: grip; mouse-cursor: nwse-resize; start(d) => { root.start-resize(d); } }
-        if !root.is-max: Grip { dir: 6; x: 0; y: root.height - grip; width: grip; height: grip; mouse-cursor: nesw-resize; start(d) => { root.start-resize(d); } }
-        if !root.is-max: Grip { dir: 7; x: 0; y: grip; width: grip; height: root.height - 2 * grip; mouse-cursor: ew-resize; start(d) => { root.start-resize(d); } }
-
-        // Drag-and-drop overlay
-        if root.dragging: Rectangle {
-            background: Theme.p.bg1.transparentize(12%);
-            Rectangle {
-                x: 24px;
-                y: 24px;
-                width: parent.width - 48px;
-                height: parent.height - 48px;
-                border-radius: 24px;
-                border-width: 3px;
-                border-color: Theme.p.accent;
-                background: Theme.p.accent.transparentize(88%);
-                VerticalLayout {
-                    alignment: center;
-                    spacing: 10px;
-                    Text { text: "+"; color: Theme.p.accent; font-size: 64px; font-weight: 300; horizontal-alignment: center; }
-                    Text { text: "Drop it here"; color: Theme.p.text; font-size: 28px; font-weight: 800; horizontal-alignment: center; }
-                    Text { text: "MP3 becomes the audio · PNG, JPG, WEBP or BMP becomes the artwork"; color: Theme.p.muted; font-size: 14px; horizontal-alignment: center; }
-                }
-            }
-        }
-    }
-}
+slint::include_modules!();
 
 const RESOLUTIONS: [(u32, u32); 3] = [(1280, 720), (1920, 1080), (3840, 2160)];
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp"];
@@ -537,14 +33,34 @@ const RESIZE_DIRS: [ResizeDirection; 8] = [
     ResizeDirection::SouthWest,
     ResizeDirection::West,
 ];
+/// Shared-library build: smallest GPL download (≈83 MB) that includes libx264. Stable URL.
+const FFMPEG_URL: &str =
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip";
+const FFMPEG_ZIP_ROOT: &str = "ffmpeg-master-latest-win64-gpl-shared";
+/// Same relative blur strength for the preview and every output resolution.
+const BLUR: &str = "boxblur=luma_radius=min(h\\,w)/20:luma_power=3";
 
-/// ffmpeg/ffprobe next to our exe (release zip bundles them), else from PATH.
+// ───────────── ffmpeg discovery & management ─────────────
+
+/// Where rmpyou keeps its own FFmpeg download (survives app updates).
+fn managed_dir() -> Option<PathBuf> {
+    Some(PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("rmpyou").join("ffmpeg"))
+}
+
+/// Finds a tool: next to rmpyou.exe (portable), then rmpyou's managed copy, then PATH.
+fn find_tool(name: &str) -> Option<(PathBuf, &'static str)> {
+    let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    let beside = std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join(&file)));
+    let managed = managed_dir().map(|d| d.join("bin").join(&file));
+    let on_path = std::env::var_os("PATH")
+        .and_then(|p| std::env::split_paths(&p).map(|d| d.join(&file)).find(|p| p.is_file()));
+    [(beside, "next to rmpyou"), (managed, "managed by rmpyou"), (on_path, "system PATH")]
+        .into_iter()
+        .find_map(|(p, src)| p.filter(|p| p.is_file()).map(|p| (p, src)))
+}
+
 fn tool(name: &str) -> Command {
-    let bundled = std::env::current_exe()
-        .ok()
-        .and_then(|exe| Some(exe.parent()?.join(format!("{name}{}", std::env::consts::EXE_SUFFIX))))
-        .filter(|p| p.exists());
-    let mut cmd = Command::new(bundled.unwrap_or_else(|| name.into()));
+    let mut cmd = Command::new(find_tool(name).map_or_else(|| PathBuf::from(name), |t| t.0));
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -552,6 +68,51 @@ fn tool(name: &str) -> Command {
     }
     cmd
 }
+
+fn ffmpeg_version() -> Option<String> {
+    let out = tool("ffmpeg").arg("-version").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    Some(text.split_whitespace().nth(2)?.to_string()).filter(|_| out.status.success())
+}
+
+fn refresh_ffmpeg(ui: &AppWindow) {
+    let version = ffmpeg_version();
+    let ok = version.is_some() && find_tool("ffprobe").is_some();
+    let found = find_tool("ffmpeg");
+    ui.set_ffmpeg_ok(ok);
+    ui.set_ffmpeg_version(version.unwrap_or_default().into());
+    ui.set_ffmpeg_source(found.as_ref().map_or("", |t| t.1).into());
+    ui.set_ffmpeg_path(found.map(|t| t.0.to_string_lossy().into_owned()).unwrap_or_default().into());
+}
+
+/// Downloads FFmpeg into the managed dir. Swaps in atomically-ish: the old copy is only
+/// removed once the new one is fully downloaded and extracted.
+fn install_ffmpeg(on_progress: impl Fn(u64, Option<u64>) + Send + Sync + 'static) -> Result<(), String> {
+    let dir = managed_dir().ok_or("LOCALAPPDATA is not set")?;
+    let staging = dir.with_file_name("ffmpeg-staging");
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+    let zip = staging.join("ffmpeg.zip");
+    let file = fs::File::create(&zip).map_err(|e| e.to_string())?;
+    self_update::Download::from_url(FFMPEG_URL)
+        .progress_callback(on_progress)
+        .download_to(file)
+        .map_err(|e| format!("download failed: {e}"))?;
+    self_update::Extract::from_source(&zip)
+        .archive(self_update::ArchiveKind::Zip)
+        .extract_into(&staging)
+        .map_err(|e| format!("unzip failed: {e}"))?;
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let root = staging.join(FFMPEG_ZIP_ROOT);
+    fs::rename(root.join("bin"), dir.join("bin")).map_err(|e| e.to_string())?;
+    let _ = fs::remove_file(dir.join("bin").join("ffplay.exe")); // player, not needed
+    let _ = fs::rename(root.join("LICENSE.txt"), dir.join("LICENSE.txt"));
+    let _ = fs::remove_dir_all(&staging);
+    Ok(())
+}
+
+// ───────────── media helpers ─────────────
 
 fn probe_duration(audio: &Path) -> Option<f64> {
     let out = tool("ffprobe")
@@ -571,19 +132,88 @@ fn fmt_time(secs: f64) -> String {
     }
 }
 
+/// A fresh temp path per call: Slint caches images by path, so reusing a name would show stale art.
+fn temp_png(tag: &str) -> PathBuf {
+    static N: AtomicU32 = AtomicU32::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("rmpyou-{tag}-{}-{n}.png", std::process::id()))
+}
+
+/// Saves the MP3's embedded cover art (ID3 picture) as a PNG, if it has one.
+fn extract_cover(audio: &Path) -> Option<PathBuf> {
+    let out = temp_png("cover");
+    tool("ffmpeg")
+        .args(["-y", "-loglevel", "error", "-i"])
+        .arg(audio)
+        .args(["-map", "0:v:0", "-frames:v", "1"])
+        .arg(&out)
+        .status()
+        .ok()?
+        .success()
+        .then_some(out)
+}
+
+/// The image's average color, used by the "Auto" fill.
+fn average_color(image: &Path) -> Option<Color> {
+    let out = tool("ffmpeg")
+        .args(["-loglevel", "error", "-i"])
+        .arg(image)
+        .args(["-vf", "scale=1:1:flags=area", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
+        .output()
+        .ok()?;
+    match out.stdout[..] {
+        [r, g, b, ..] => Some(Color::from_rgb_u8(r, g, b)),
+        _ => None,
+    }
+}
+
+/// Small blurred 16:9 background for the preview, same look as the render's blur fill.
+fn blur_preview(image: &Path) -> Option<PathBuf> {
+    let out = temp_png("blur");
+    let vf = format!("scale=480:270:force_original_aspect_ratio=increase,crop=480:270,{BLUR}");
+    tool("ffmpeg")
+        .args(["-y", "-loglevel", "error", "-i"])
+        .arg(image)
+        .args(["-vf", &vf, "-frames:v", "1"])
+        .arg(&out)
+        .status()
+        .ok()?
+        .success()
+        .then_some(out)
+}
+
+fn parse_hex(s: &str) -> Option<Color> {
+    let s = s.trim().trim_start_matches('#');
+    let v = u32::from_str_radix(s, 16).ok().filter(|_| s.len() == 6)?;
+    Some(Color::from_rgb_u8((v >> 16) as u8, (v >> 8) as u8, v as u8))
+}
+
+/// `fill`: None = blurred copy of the image, Some(0xRRGGBB) = solid color.
+fn video_filter((w, h): (u32, u32), fill: Option<&str>) -> String {
+    match fill {
+        Some(color) => format!(
+            "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={color},setsar=1,format=yuv420p"
+        ),
+        None => format!(
+            "split[a][b];[a]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},{BLUR}[bg];\
+             [b]scale={w}:{h}:force_original_aspect_ratio=decrease[fg];\
+             [bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p"
+        ),
+    }
+}
+
 /// Encode still image + audio into a YouTube-ready MP4. The MP3 stream is copied untouched (no quality
 /// loss, no size growth) and the still is encoded at 2 fps, so the file ends up barely larger than the MP3.
 fn render(
     image: &Path,
     audio: &Path,
     out: &Path,
-    (w, h): (u32, u32),
+    res: (u32, u32),
+    fill: Option<&str>,
     duration: f64,
     on_progress: impl Fn(f32),
 ) -> Result<(), String> {
-    let vf = format!(
-        "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p"
-    );
+    let vf = video_filter(res, fill);
     let mut cmd = tool("ffmpeg");
     cmd.args(["-y", "-hide_banner", "-loglevel", "error", "-loop", "1", "-framerate", "2", "-i"])
         .arg(image)
@@ -604,7 +234,7 @@ fn render(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("could not start ffmpeg ({e}). Is it installed?"))?;
+        .map_err(|e| format!("could not start ffmpeg ({e})"))?;
 
     let mut stderr = child.stderr.take().unwrap();
     let errors = thread::spawn(move || {
@@ -628,16 +258,68 @@ fn render(
     }
 }
 
-fn theme_file() -> Option<PathBuf> {
-    Some(PathBuf::from(std::env::var_os("APPDATA")?).join("rmpyou").join("theme"))
+// ───────────── settings ─────────────
+
+fn settings_file() -> Option<PathBuf> {
+    Some(PathBuf::from(std::env::var_os("APPDATA")?).join("rmpyou").join("settings.ini"))
 }
 
+fn load_settings(ui: &AppWindow) {
+    let Some(text) = settings_file().and_then(|f| fs::read_to_string(f).ok()) else { return };
+    for (key, value) in text.lines().filter_map(|l| l.split_once('=')) {
+        match (key.trim(), value.trim()) {
+            ("theme", v) => {
+                if let Some(i) = v.parse().ok().filter(|i| (0..4).contains(i)) {
+                    ui.global::<Theme>().set_index(i);
+                }
+            }
+            ("fill", v) => {
+                if let Some(i) = v.parse().ok().filter(|i| (0..5).contains(i)) {
+                    ui.set_fill_kind(i);
+                }
+            }
+            ("custom_color", v) => {
+                if let Some(c) = parse_hex(v) {
+                    ui.set_custom_color(c);
+                    ui.set_custom_hex(v.into());
+                }
+            }
+            ("auto_update", v) => ui.set_auto_update(v != "false"),
+            _ => {}
+        }
+    }
+}
+
+fn save_settings(ui: &AppWindow) {
+    let Some(f) = settings_file() else { return };
+    let _ = fs::create_dir_all(f.parent().unwrap());
+    let c = ui.get_custom_color();
+    let _ = fs::write(
+        f,
+        format!(
+            "theme={}\nfill={}\ncustom_color=#{:02X}{:02X}{:02X}\nauto_update={}\n",
+            ui.global::<Theme>().get_index(),
+            ui.get_fill_kind(),
+            c.red(),
+            c.green(),
+            c.blue(),
+            ui.get_auto_update()
+        ),
+    );
+}
+
+// ───────────── updates ─────────────
+
 /// Only enabled in CI builds, where GitHub sets GITHUB_REPOSITORY=owner/repo.
+fn repo() -> Option<&'static str> {
+    option_env!("GITHUB_REPOSITORY")
+}
+
 fn updater() -> Option<self_update::backends::github::Update> {
-    let (owner, repo) = option_env!("GITHUB_REPOSITORY")?.split_once('/')?;
+    let (owner, name) = repo()?.split_once('/')?;
     self_update::backends::github::Update::configure()
         .repo_owner(owner)
-        .repo_name(repo)
+        .repo_name(name)
         .bin_name("rmpyou")
         .current_version(self_update::cargo_crate_version!())
         .no_confirm(true)
@@ -645,6 +327,29 @@ fn updater() -> Option<self_update::backends::github::Update> {
         .show_download_progress(false)
         .build()
         .ok()
+}
+
+fn check_for_update(weak: slint::Weak<AppWindow>) {
+    thread::spawn(move || {
+        let result = updater().map(|u| u.is_update_available());
+        let _ = weak.upgrade_in_event_loop(move |ui| match result {
+            Some(Ok(Some(release))) => {
+                ui.set_update_version(release.version().into());
+                ui.set_update_state("available".into());
+            }
+            Some(Ok(None)) => ui.set_update_state("latest".into()),
+            _ => ui.set_update_state("failed".into()),
+        });
+    });
+}
+
+// ───────────── UI glue ─────────────
+
+fn open(target: &str) {
+    #[cfg(windows)]
+    let _ = Command::new("explorer").arg(target).spawn();
+    #[cfg(not(windows))]
+    let _ = target;
 }
 
 fn set_output(ui: &AppWindow, path: &Path) {
@@ -661,6 +366,16 @@ fn load_image(ui: &AppWindow, path: &Path) {
             ui.set_image_path(path.to_string_lossy().as_ref().into());
             ui.set_done(false);
             ui.set_status("".into());
+            if let Some(c) = average_color(path) {
+                ui.set_auto_color(c);
+            }
+            match blur_preview(path).and_then(|p| slint::Image::load_from_path(&p).ok()) {
+                Some(bg) => {
+                    ui.set_blur_bg(bg);
+                    ui.set_has_blur(true);
+                }
+                None => ui.set_has_blur(false),
+            }
         }
         Err(_) => ui.set_status("Couldn't read that image.".into()),
     }
@@ -675,7 +390,7 @@ fn load_audio(ui: &AppWindow, path: &Path) {
     ui.set_audio_info(
         match duration {
             Some(d) => format!("{} · {mb:.1} MB", fmt_time(d)),
-            None => "ffprobe not found — progress unavailable".into(),
+            None => format!("{mb:.1} MB"),
         }
         .into(),
     );
@@ -687,34 +402,30 @@ fn load_audio(ui: &AppWindow, path: &Path) {
     }
 }
 
-/// Saves the MP3's embedded cover art (ID3 picture) as a PNG in the temp dir, if it has one.
-fn extract_cover(audio: &Path) -> Option<PathBuf> {
-    let out = std::env::temp_dir().join(format!("rmpyou-cover-{}.png", std::process::id()));
-    tool("ffmpeg")
-        .args(["-y", "-loglevel", "error", "-i"])
-        .arg(audio)
-        .args(["-map", "0:v:0", "-frames:v", "1"])
-        .arg(&out)
-        .status()
-        .ok()?
-        .success()
-        .then_some(out)
-}
-
 fn main() -> Result<(), slint::PlatformError> {
     let app = AppWindow::new()?;
 
-    if let Some(i) = theme_file()
-        .and_then(|f| fs::read_to_string(f).ok())
-        .and_then(|s| s.trim().parse::<i32>().ok())
-        .filter(|i| (0..4).contains(i))
-    {
-        app.global::<Theme>().set_index(i);
+    let author = env!("CARGO_PKG_AUTHORS").split(':').next().unwrap_or_default();
+    let initials: String = author.split_whitespace().filter_map(|w| w.chars().next()).take(2).collect();
+    app.set_app_version(env!("CARGO_PKG_VERSION").into());
+    app.set_author(author.into());
+    app.set_author_initials(initials.to_uppercase().into());
+    app.set_repo_url(repo().map(|r| format!("https://github.com/{r}")).unwrap_or_default().into());
+    load_settings(&app);
+    if let Some(c) = parse_hex(&app.get_custom_hex()) {
+        app.set_custom_color(c);
     }
-    app.on_theme_changed(|i| {
-        if let Some(f) = theme_file() {
-            let _ = fs::create_dir_all(f.parent().unwrap());
-            let _ = fs::write(f, i.to_string());
+    refresh_ffmpeg(&app);
+
+    let weak = app.as_weak();
+    app.on_settings_changed(move || save_settings(&weak.unwrap()));
+
+    let weak = app.as_weak();
+    app.on_custom_hex_edited(move |text| {
+        let ui = weak.unwrap();
+        if let Some(c) = parse_hex(&text) {
+            ui.set_custom_color(c);
+            save_settings(&ui);
         }
     });
 
@@ -802,6 +513,8 @@ fn main() -> Result<(), slint::PlatformError> {
         let audio = PathBuf::from(ui.get_audio_path().as_str());
         let out = PathBuf::from(ui.get_out_path().as_str());
         let res = RESOLUTIONS[ui.get_resolution().clamp(0, 2) as usize];
+        let c = ui.get_fill_color();
+        let fill = (ui.get_fill_kind() != 0).then(|| format!("0x{:02X}{:02X}{:02X}", c.red(), c.green(), c.blue()));
         let duration = ui.get_duration() as f64;
         ui.set_rendering(true);
         ui.set_done(false);
@@ -810,7 +523,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         thread::spawn(move || {
             let w = weak.clone();
-            let result = render(&image, &audio, &out, res, duration, move |p| {
+            let result = render(&image, &audio, &out, res, fill.as_deref(), duration, move |p| {
                 let _ = w.upgrade_in_event_loop(move |ui| ui.set_progress(p));
             });
             let _ = weak.upgrade_in_event_loop(move |ui| {
@@ -839,18 +552,61 @@ fn main() -> Result<(), slint::PlatformError> {
         let _ = out;
     });
 
-    if updater().is_some() {
-        let weak = app.as_weak();
+    app.on_open_url(|url| open(&url));
+
+    let weak = app.as_weak();
+    app.on_open_ffmpeg_folder(move || {
+        let path = PathBuf::from(weak.unwrap().get_ffmpeg_path().as_str());
+        if let Some(dir) = path.parent() {
+            open(&dir.to_string_lossy());
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_install_ffmpeg(move || {
+        let ui = weak.unwrap();
+        ui.set_ffmpeg_busy(true);
+        ui.set_ffmpeg_progress(0.0);
+        ui.set_ffmpeg_msg("Connecting to GitHub…".into());
+        let weak = weak.clone();
         thread::spawn(move || {
-            if let Some(Ok(Some(release))) = updater().map(|u| u.is_update_available()) {
-                let version = release.version().to_string();
-                let _ = weak.upgrade_in_event_loop(move |ui| {
-                    ui.set_update_version(version.into());
-                    ui.set_update_state("available".into());
+            // Throttle UI updates to whole percents; the callback fires for every chunk.
+            let last = AtomicU32::new(u32::MAX);
+            let progress_ui = Mutex::new(weak.clone());
+            let result = install_ffmpeg(move |done, total| {
+                let Some(total) = total.filter(|t| *t > 0) else { return };
+                let pct = (done * 100 / total) as u32;
+                if last.swap(pct, Ordering::Relaxed) != pct {
+                    let msg = format!("Downloading FFmpeg… {} / {} MB", done >> 20, total >> 20);
+                    let _ = progress_ui.lock().unwrap().upgrade_in_event_loop(move |ui| {
+                        ui.set_ffmpeg_progress(pct as f32 / 100.0);
+                        ui.set_ffmpeg_msg(if pct == 100 { "Unpacking…".into() } else { msg.into() });
+                    });
+                }
+            });
+            let _ = weak.upgrade_in_event_loop(move |ui| {
+                ui.set_ffmpeg_busy(false);
+                refresh_ffmpeg(&ui);
+                ui.set_ffmpeg_msg(match result {
+                    Ok(()) => "FFmpeg is installed and ready.".into(),
+                    Err(e) => format!("FFmpeg setup failed: {e}").into(),
                 });
-            }
+            });
         });
+    });
+
+    // Updates
+    if updater().is_none() {
+        app.set_update_state("disabled".into());
+    } else if app.get_auto_update() {
+        check_for_update(app.as_weak());
     }
+
+    let weak = app.as_weak();
+    app.on_check_update(move || {
+        weak.unwrap().set_update_state("checking".into());
+        check_for_update(weak.clone());
+    });
 
     let weak = app.as_weak();
     app.on_do_update(move || {
@@ -887,18 +643,20 @@ mod tests {
             assert!(tool("ffmpeg").args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", input]).args(extra).arg(file).status().unwrap().success());
         }
         let dur = probe_duration(&mp3).unwrap();
-        let last = std::cell::Cell::new(0.0);
-        render(&img, &mp3, &out, (1920, 1080), dur, |p| last.set(p)).unwrap();
-        assert!(last.get() > 0.9);
-        let info = tool("ffprobe")
-            .args(["-v", "error", "-show_entries", "stream=codec_name,width,height,pix_fmt,sample_rate", "-of", "csv=p=0"])
-            .arg(&out)
-            .output()
-            .unwrap();
-        let info = String::from_utf8_lossy(&info.stdout);
-        assert!(info.contains("h264,1920,1080,yuv420p"), "{info}");
-        assert!(info.contains("mp3,"), "audio must be stream-copied: {info}");
-        assert!((probe_duration(&out).unwrap() - dur).abs() < 0.2);
+        for fill in [None, Some("0x1E293B")] {
+            let last = std::cell::Cell::new(0.0);
+            render(&img, &mp3, &out, (1920, 1080), fill, dur, |p| last.set(p)).unwrap();
+            assert!(last.get() > 0.9);
+            let info = tool("ffprobe")
+                .args(["-v", "error", "-show_entries", "stream=codec_name,width,height,pix_fmt,sample_rate", "-of", "csv=p=0"])
+                .arg(&out)
+                .output()
+                .unwrap();
+            let info = String::from_utf8_lossy(&info.stdout);
+            assert!(info.contains("h264,1920,1080,yuv420p"), "{info}");
+            assert!(info.contains("mp3,"), "audio must be stream-copied: {info}");
+            assert!((probe_duration(&out).unwrap() - dur).abs() < 0.2);
+        }
 
         // No embedded art -> None; with art -> extracted PNG.
         assert!(extract_cover(&mp3).is_none());
@@ -909,5 +667,15 @@ mod tests {
             .arg(&tagged).status().unwrap().success());
         let cover = extract_cover(&tagged).unwrap();
         assert!(slint::Image::load_from_path(&cover).is_ok());
+        assert!(average_color(&cover).is_some());
+        assert!(blur_preview(&cover).is_some());
+    }
+
+    #[test]
+    fn parses_hex_colors() {
+        assert_eq!(parse_hex("#1E293B"), Some(Color::from_rgb_u8(0x1e, 0x29, 0x3b)));
+        assert_eq!(parse_hex("ff0000"), Some(Color::from_rgb_u8(255, 0, 0)));
+        assert_eq!(parse_hex("#12345"), None);
+        assert_eq!(parse_hex("#GGGGGG"), None);
     }
 }

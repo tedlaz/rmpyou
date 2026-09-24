@@ -1,0 +1,1119 @@
+struct Palette {
+    bg1: color, bg2: color, card: color, border: color, field: color,
+    text: color, muted: color, accent: color, accent2: color,
+}
+
+export global Theme {
+    in-out property <int> index: 0;
+    out property <[string]> names: ["Midnight", "Carbon", "Daylight", "Sakura"];
+    out property <[Palette]> palettes: [
+        { bg1: #0f0c29, bg2: #302b63, card: #ffffff12, border: #ffffff24, field: #00000038,
+          text: #f5f3ff, muted: #a5a1c9, accent: #8b5cf6, accent2: #ec4899 },
+        { bg1: #0b0f14, bg2: #1c2530, card: #ffffff0f, border: #ffffff1f, field: #00000045,
+          text: #e6edf3, muted: #8b98a5, accent: #14b8a6, accent2: #22d3ee },
+        { bg1: #f5f7ff, bg2: #dbe4ff, card: #ffffffd0, border: #1e3a8a24, field: #eef2ff,
+          text: #0f172a, muted: #64748b, accent: #2563eb, accent2: #7c3aed },
+        { bg1: #fff5f7, bg2: #ffdde8, card: #ffffffd0, border: #be185d26, field: #fff1f5,
+          text: #3b0a1f, muted: #9d5c77, accent: #e11d48, accent2: #f97316 },
+    ];
+    out property <Palette> p: palettes[index];
+}
+
+component Label inherits Text {
+    color: Theme.p.muted;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.4px;
+}
+
+component Card inherits Rectangle {
+    background: Theme.p.card;
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: Theme.p.border;
+    drop-shadow-blur: 30px;
+    drop-shadow-offset-y: 10px;
+    drop-shadow-color: #00000030;
+    animate background, border-color { duration: 250ms; }
+}
+
+component Button inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    in property <bool> enabled: true;
+    callback clicked;
+    min-height: 36px;
+    border-radius: 10px;
+    background: primary ? (ta.has-hover ? Theme.p.accent.brighter(10%) : Theme.p.accent)
+        : (ta.has-hover && enabled ? Theme.p.border : Theme.p.field);
+    border-width: primary ? 0px : 1px;
+    border-color: Theme.p.border;
+    opacity: !enabled ? 0.45 : ta.pressed ? 0.8 : 1;
+    accessible-role: button;
+    accessible-label: text;
+    accessible-action-default => { if enabled { clicked(); } }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        Text {
+            text: root.text;
+            color: root.primary ? white : Theme.p.text;
+            font-size: 13px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Primary action; while busy the button itself becomes the progress bar.
+component RenderButton inherits Rectangle {
+    in property <bool> enabled;
+    in property <bool> busy;
+    in property <bool> done;
+    in property <float> progress;
+    callback clicked;
+    height: 58px;
+    border-radius: 14px;
+    clip: true;
+    background: busy ? Theme.p.accent.darker(45%) : Theme.p.accent;
+    opacity: !enabled && !busy ? 0.4 : ta.pressed ? 0.85 : 1;
+    drop-shadow-blur: enabled || busy ? (ta.has-hover ? 28px : 18px) : 0px;
+    drop-shadow-color: Theme.p.accent2.transparentize(35%);
+    animate drop-shadow-blur { duration: 200ms; }
+    animate opacity { duration: 150ms; }
+    accessible-role: button;
+    accessible-label: busy ? "Rendering " + Math.round(progress * 100) + " percent" : "Render video";
+    accessible-action-default => { if enabled { clicked(); } }
+    if busy: Rectangle {
+        x: 0;
+        width: parent.width * root.progress;
+        height: parent.height;
+        border-radius: 14px;
+        background: Theme.p.accent;
+        animate width { duration: 300ms; easing: ease-out; }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+    Text {
+        text: root.busy ? "Rendering…  " + Math.round(root.progress * 100) + "%"
+            : root.done ? "Render again" : "Render video";
+        color: white;
+        font-size: 17px;
+        font-weight: 700;
+    }
+}
+
+component Field inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <string> action;
+    callback clicked;
+    min-height: 62px;
+    border-radius: 12px;
+    background: ta.has-hover ? Theme.p.border : Theme.p.field;
+    border-width: 1px;
+    border-color: ta.has-hover ? Theme.p.accent : Theme.p.border;
+    animate border-color { duration: 150ms; }
+    accessible-role: button;
+    accessible-label: action + " " + title;
+    accessible-action-default => { clicked(); }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    HorizontalLayout {
+        padding: 14px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            spacing: 3px;
+            Text { text: root.title; color: Theme.p.text; font-size: 14px; font-weight: 600; overflow: elide; }
+            if root.subtitle != "": Text { text: root.subtitle; color: Theme.p.muted; font-size: 12px; overflow: elide; }
+        }
+        Text {
+            text: root.action;
+            color: Theme.p.accent;
+            font-size: 13px;
+            font-weight: 700;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+}
+
+// Selectable pill used for resolution and background fill.
+component Chip inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    in property <color> swatch: transparent;
+    in property <bool> show-swatch;
+    callback clicked;
+    height: 40px;
+    border-radius: 10px;
+    background: selected ? Theme.p.accent : (ta.has-hover ? Theme.p.border : Theme.p.field);
+    border-width: selected ? 0px : 1px;
+    border-color: Theme.p.border;
+    animate background { duration: 150ms; }
+    accessible-role: button;
+    accessible-label: text;
+    accessible-action-default => { clicked(); }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    HorizontalLayout {
+        alignment: center;
+        spacing: 7px;
+        padding-left: 8px;
+        padding-right: 8px;
+        if root.show-swatch: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 14px;
+                height: 14px;
+                border-radius: 7px;
+                background: root.swatch;
+                border-width: 1px;
+                border-color: root.selected ? #ffffffa0 : Theme.p.muted.transparentize(40%);
+            }
+        }
+        Text {
+            text: root.text;
+            color: root.selected ? white : Theme.p.text;
+            font-size: 13px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component Switch inherits Rectangle {
+    in-out property <bool> checked;
+    callback toggled(bool);
+    width: 44px;
+    height: 24px;
+    border-radius: 12px;
+    background: checked ? Theme.p.accent : Theme.p.border;
+    animate background { duration: 180ms; }
+    accessible-role: checkbox;
+    accessible-checked: checked;
+    accessible-action-default => { checked = !checked; toggled(checked); }
+    Rectangle {
+        width: 18px;
+        height: 18px;
+        y: 3px;
+        x: root.checked ? root.width - self.width - 3px : 3px;
+        border-radius: 9px;
+        background: white;
+        drop-shadow-blur: 4px;
+        drop-shadow-color: #00000040;
+        animate x { duration: 180ms; easing: ease-out; }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.checked = !root.checked; root.toggled(root.checked); }
+    }
+}
+
+component Section inherits Rectangle {
+    in property <string> title;
+    background: Theme.p.card;
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: Theme.p.border;
+    VerticalLayout {
+        padding: 18px;
+        spacing: 12px;
+        Label { text: root.title; }
+        @children
+    }
+}
+
+component Grip inherits TouchArea {
+    in property <int> dir;
+    callback start(int);
+    pointer-event(e) => {
+        if e.kind == PointerEventKind.down && e.button == PointerEventButton.left { root.start(root.dir); }
+    }
+}
+
+component WinButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> danger;
+    callback clicked;
+    width: 46px;
+    background: ta.pressed ? (danger ? #b40f1e : Theme.p.field)
+        : ta.has-hover ? (danger ? #e81123 : Theme.p.border) : transparent;
+    animate background { duration: 120ms; }
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => { clicked(); }
+    ta := TouchArea { clicked => { root.clicked(); } }
+    Path {
+        width: 10px;
+        height: 10px;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        commands: root.icon;
+        fill: transparent;
+        stroke: ta.has-hover && root.danger ? white : Theme.p.text;
+        stroke-width: 1.2px;
+    }
+}
+
+component Logo inherits Rectangle {
+    in property <length> size: 32px;
+    in property <bool> inverted;
+    width: size;
+    height: size;
+    border-radius: size * 0.28;
+    background: inverted ? white : Theme.p.accent;
+    Path {
+        width: root.size * 0.34;
+        height: root.size * 0.38;
+        x: root.size * 0.37;
+        viewbox-width: 11;
+        viewbox-height: 12;
+        fill: root.inverted ? Theme.p.accent : white;
+        commands: "M 0 0 L 11 6 L 0 12 Z";
+    }
+}
+
+component ThemeCard inherits Rectangle {
+    in property <int> index;
+    in property <string> name;
+    property <Palette> pal: Theme.palettes[index];
+    property <bool> selected: Theme.index == index;
+    callback picked(int);
+    height: 84px;
+    border-radius: 14px;
+    background: pal.bg1;
+    border-width: selected ? 2px : 1px;
+    border-color: selected ? Theme.p.accent : Theme.p.border;
+    accessible-role: button;
+    accessible-label: name + " theme";
+    accessible-action-default => { picked(index); }
+    // Mini mock of the app in this palette
+    Rectangle {
+        x: 12px;
+        y: 12px;
+        width: parent.width - 24px;
+        height: 36px;
+        border-radius: 8px;
+        background: pal.bg2;
+        Rectangle { x: 8px; y: 8px; width: 20px; height: 20px; border-radius: 6px; background: pal.accent; }
+        Rectangle { x: 36px; y: 11px; width: parent.width * 0.35; height: 5px; border-radius: 2.5px; background: pal.text; opacity: 0.8; }
+        Rectangle { x: 36px; y: 21px; width: parent.width * 0.22; height: 5px; border-radius: 2.5px; background: pal.muted; }
+        Rectangle { x: parent.width - 34px; y: 10px; width: 26px; height: 16px; border-radius: 8px; background: pal.accent2; }
+    }
+    Text {
+        x: 14px;
+        y: 56px;
+        text: root.name;
+        color: pal.text;
+        font-size: 13px;
+        font-weight: 700;
+    }
+    if selected: Rectangle {
+        x: parent.width - 30px;
+        y: 55px;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        background: Theme.p.accent;
+        Path {
+            width: 10px;
+            height: 8px;
+            viewbox-width: 10;
+            viewbox-height: 8;
+            commands: "M 1 4 L 4 7 L 9 1";
+            stroke: white;
+            stroke-width: 2px;
+            fill: transparent;
+        }
+    }
+    TouchArea { mouse-cursor: pointer; clicked => { root.picked(root.index); } }
+}
+
+component Tag inherits Rectangle {
+    in property <string> text;
+    callback clicked;
+    height: 30px;
+    border-radius: 15px;
+    background: ta.has-hover ? Theme.p.accent : Theme.p.field;
+    border-width: 1px;
+    border-color: Theme.p.border;
+    animate background { duration: 150ms; }
+    accessible-role: button;
+    accessible-label: text;
+    accessible-action-default => { clicked(); }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        Text {
+            text: root.text;
+            color: ta.has-hover ? white : Theme.p.text;
+            font-size: 12px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "rmpyou — MP3 to YouTube video";
+    no-frame: true;
+    preferred-width: 640px;
+    preferred-height: 860px;
+    min-width: 540px;
+    min-height: 740px;
+    background: @linear-gradient(135deg, Theme.p.bg1 0%, Theme.p.bg2 100%);
+
+    // Inputs
+    in property <image> cover;
+    in property <bool> has-cover;
+    in-out property <string> image-path;
+    in-out property <string> audio-path;
+    in property <string> audio-name;
+    in property <string> audio-info;
+    in-out property <float> duration;
+    in-out property <int> resolution: 1;
+    in-out property <string> out-path;
+    in property <string> out-name;
+    in property <string> out-dir;
+
+    // Background fill: 0 blur, 1 auto (average color), 2 black, 3 white, 4 custom
+    in-out property <int> fill-kind: 0;
+    in property <image> blur-bg;
+    in property <bool> has-blur;
+    in property <color> auto-color: #202020;
+    in property <color> custom-color: #1e293b;
+    in-out property <string> custom-hex: "#1E293B";
+    out property <color> fill-color: fill-kind == 1 ? auto-color : fill-kind == 3 ? white : fill-kind == 4 ? custom-color : black;
+
+    // Render state
+    in property <float> progress;
+    in property <bool> rendering;
+    in property <bool> done;
+    in property <string> status;
+
+    // Window
+    in property <bool> is-max;
+    in property <bool> dragging;
+    in-out property <bool> settings-open;
+
+    // Settings / about
+    in property <string> app-version;
+    in property <string> author;
+    in property <string> author-initials;
+    in property <string> repo-url;
+    in-out property <bool> auto-update: true;
+    in property <string> update-version;
+    in property <string> update-state; // "", disabled, checking, latest, available, downloading, ready, failed
+
+    // FFmpeg
+    in property <bool> ffmpeg-ok;
+    in property <string> ffmpeg-version;
+    in property <string> ffmpeg-source;
+    in property <string> ffmpeg-path;
+    in property <bool> ffmpeg-busy;
+    in property <float> ffmpeg-progress;
+    in property <string> ffmpeg-msg;
+
+    callback pick-image();
+    callback pick-audio();
+    callback pick-output();
+    callback render();
+    callback open-folder();
+    callback settings-changed();
+    callback custom-hex-edited(string);
+    callback check-update();
+    callback do-update();
+    callback restart();
+    callback install-ffmpeg();
+    callback open-ffmpeg-folder();
+    callback open-url(string);
+    callback start-drag();
+    callback start-resize(int);
+    callback minimize();
+    callback toggle-maximize();
+    callback close-window();
+
+    property <[string]> res-labels: ["720p", "1080p", "4K"];
+    property <bool> can-render: ffmpeg-ok && !ffmpeg-busy && has-cover && audio-path != "" && out-path != "" && !rendering;
+    property <length> grip: 6px;
+    property <length> bar-h: 56px;
+
+    VerticalLayout {
+        // Custom title bar
+        Rectangle {
+            height: root.bar-h;
+            background: Theme.p.card;
+            animate background { duration: 250ms; }
+            TouchArea {
+                moved => { if self.pressed { root.start-drag(); } }
+                double-clicked => { root.toggle-maximize(); }
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.p.border;
+            }
+            HorizontalLayout {
+                padding-left: 16px;
+                spacing: 12px;
+                VerticalLayout {
+                    alignment: center;
+                    Logo {
+                        drop-shadow-blur: 14px;
+                        drop-shadow-color: Theme.p.accent2.transparentize(35%);
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Text { text: "rmpyou"; color: Theme.p.text; font-size: 15px; font-weight: 800; }
+                    Text { text: "MP3 + artwork → YouTube-ready video"; color: Theme.p.muted; font-size: 11px; }
+                }
+                Rectangle { horizontal-stretch: 1; }
+
+                if root.update-state == "available" || root.update-state == "downloading" || root.update-state == "ready": VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        border-radius: 10px;
+                        background: Theme.p.field;
+                        border-width: 1px;
+                        border-color: Theme.p.accent;
+                        HorizontalLayout {
+                            padding: 3px;
+                            padding-left: 12px;
+                            spacing: 10px;
+                            Text {
+                                vertical-alignment: center;
+                                color: Theme.p.text;
+                                font-size: 12px;
+                                text: root.update-state == "available" ? "v" + root.update-version + " is out"
+                                    : root.update-state == "downloading" ? "Updating…" : "Update installed";
+                            }
+                            if root.update-state != "downloading": Button {
+                                min-height: 28px;
+                                primary: true;
+                                text: root.update-state == "available" ? "Update" : "Restart";
+                                clicked => { if root.update-state == "available" { root.do-update(); } else { root.restart(); } }
+                            }
+                        }
+                    }
+                }
+
+                // Settings button (sliders icon)
+                VerticalLayout {
+                    alignment: center;
+                    gear := Rectangle {
+                        width: 36px;
+                        height: 36px;
+                        border-radius: 10px;
+                        background: root.settings-open ? Theme.p.accent : gear-ta.has-hover ? Theme.p.border : transparent;
+                        animate background { duration: 150ms; }
+                        accessible-role: button;
+                        accessible-label: "Settings";
+                        accessible-action-default => { root.settings-open = !root.settings-open; }
+                        property <color> ink: root.settings-open ? white : Theme.p.text;
+                        for row[i] in [{ y: 11px, knob: 11px }, { y: 17px, knob: 20px }, { y: 23px, knob: 14px }]: Rectangle {
+                            Rectangle { x: 10px; y: row.y; width: 16px; height: 2px; border-radius: 1px; background: gear.ink; }
+                            Rectangle {
+                                x: row.knob - 3px;
+                                y: row.y - 2px;
+                                width: 6px;
+                                height: 6px;
+                                border-radius: 3px;
+                                background: root.settings-open ? Theme.p.accent : Theme.p.card.with-alpha(1);
+                                border-width: 2px;
+                                border-color: gear.ink;
+                            }
+                        }
+                        gear-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.settings-open = !root.settings-open; }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle { width: 1px; height: 24px; background: Theme.p.border; }
+                }
+                WinButton { label: "Minimize"; icon: "M 0 5 L 10 5"; clicked => { root.minimize(); } }
+                WinButton {
+                    label: root.is-max ? "Restore" : "Maximize";
+                    icon: root.is-max ? "M 0 2 L 8 2 L 8 10 L 0 10 Z M 2 2 L 2 0 L 10 0 L 10 8 L 8 8" : "M 0 0 L 10 0 L 10 10 L 0 10 Z";
+                    clicked => { root.toggle-maximize(); }
+                }
+                WinButton { label: "Close"; danger: true; icon: "M 0 0 L 10 10 M 10 0 L 0 10"; clicked => { root.close-window(); } }
+            }
+        }
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 16px;
+
+            // FFmpeg missing banner
+            if !root.ffmpeg-ok: Card {
+                border-color: Theme.p.accent;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+                    HorizontalLayout {
+                        spacing: 12px;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 3px;
+                            Text { text: "One-time setup: FFmpeg"; color: Theme.p.text; font-size: 14px; font-weight: 700; }
+                            Text {
+                                text: root.ffmpeg-busy ? root.ffmpeg-msg : "rmpyou needs FFmpeg to create videos. It's downloaded once (≈ 83 MB) and kept separately from the app.";
+                                color: Theme.p.muted;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Button {
+                                primary: true;
+                                enabled: !root.ffmpeg-busy;
+                                text: root.ffmpeg-busy ? Math.round(root.ffmpeg-progress * 100) + "%" : "Download";
+                                clicked => { root.install-ffmpeg(); }
+                            }
+                        }
+                    }
+                    if root.ffmpeg-busy: Rectangle {
+                        height: 6px;
+                        border-radius: 3px;
+                        background: Theme.p.field;
+                        Rectangle {
+                            x: 0;
+                            width: parent.width * root.ffmpeg-progress;
+                            border-radius: 3px;
+                            background: Theme.p.accent;
+                            animate width { duration: 250ms; }
+                        }
+                    }
+                }
+            }
+
+            Card {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 10px;
+
+                    Label { text: "AUDIO"; }
+                    Field {
+                        title: root.audio-name == "" ? "Choose or drop an MP3" : root.audio-name;
+                        subtitle: root.audio-info;
+                        action: root.audio-name == "" ? "Browse" : "Change";
+                        clicked => { root.pick-audio(); }
+                    }
+
+                    Rectangle { height: 6px; }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Label { text: "ARTWORK"; }
+                        Label {
+                            text: root.has-cover ? "PREVIEW · " + root.res-labels[root.resolution] + " · CLICK TO CHANGE" : "";
+                            horizontal-alignment: right;
+                        }
+                    }
+                    Rectangle {
+                        vertical-stretch: 1;
+                        min-height: 160px;
+                        frame := Rectangle {
+                            width: min(parent.width, parent.height * 16 / 9);
+                            height: self.width * 9 / 16;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 14px;
+                            clip: true;
+                            background: !root.has-cover ? Theme.p.field : root.fill-color;
+                            animate background { duration: 200ms; }
+                            border-width: root.has-cover ? 0px : 2px;
+                            border-color: cover-ta.has-hover ? Theme.p.accent : Theme.p.border;
+                            animate border-color { duration: 150ms; }
+                            if root.has-cover && root.fill-kind == 0 && root.has-blur: Image {
+                                width: parent.width;
+                                height: parent.height;
+                                source: root.blur-bg;
+                                image-fit: fill;
+                            }
+                            if root.has-cover: Image {
+                                width: parent.width;
+                                height: parent.height;
+                                source: root.cover;
+                                image-fit: contain;
+                            }
+                            if !root.has-cover: VerticalLayout {
+                                alignment: center;
+                                spacing: 8px;
+                                Text { text: "+"; color: Theme.p.accent; font-size: 40px; font-weight: 300; horizontal-alignment: center; }
+                                Text { text: "Choose cover image"; color: Theme.p.text; font-size: 16px; font-weight: 600; horizontal-alignment: center; }
+                                Text { text: "or drop one anywhere · MP3 cover art is used automatically"; color: Theme.p.muted; font-size: 12px; horizontal-alignment: center; }
+                            }
+                            cover-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.pick-image(); }
+                            }
+                        }
+                    }
+
+                    Rectangle { height: 6px; }
+                    Label { text: "BACKGROUND FILL"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Chip { text: "Blur"; show-swatch: true; swatch: Theme.p.muted; selected: root.fill-kind == 0; clicked => { root.fill-kind = 0; root.settings-changed(); } }
+                        Chip { text: "Auto"; show-swatch: true; swatch: root.auto-color; selected: root.fill-kind == 1; clicked => { root.fill-kind = 1; root.settings-changed(); } }
+                        Chip { text: "Black"; show-swatch: true; swatch: black; selected: root.fill-kind == 2; clicked => { root.fill-kind = 2; root.settings-changed(); } }
+                        Chip { text: "White"; show-swatch: true; swatch: white; selected: root.fill-kind == 3; clicked => { root.fill-kind = 3; root.settings-changed(); } }
+                        // Custom color: the chip turns into a hex input when selected
+                        custom := Rectangle {
+                            height: 40px;
+                            min-width: 118px;
+                            border-radius: 10px;
+                            background: root.fill-kind == 4 ? Theme.p.accent : (custom-ta.has-hover ? Theme.p.border : Theme.p.field);
+                            border-width: root.fill-kind == 4 ? 0px : 1px;
+                            border-color: Theme.p.border;
+                            accessible-role: button;
+                            accessible-label: "Custom color";
+                            accessible-action-default => { root.fill-kind = 4; root.settings-changed(); }
+                            custom-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.fill-kind = 4; root.settings-changed(); hex.focus(); }
+                            }
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                spacing: 7px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: 14px;
+                                        height: 14px;
+                                        border-radius: 7px;
+                                        background: root.custom-color;
+                                        border-width: 1px;
+                                        border-color: root.fill-kind == 4 ? #ffffffa0 : Theme.p.muted.transparentize(40%);
+                                    }
+                                }
+                                hex := TextInput {
+                                    text <=> root.custom-hex;
+                                    enabled: root.fill-kind == 4;
+                                    single-line: true;
+                                    vertical-alignment: center;
+                                    color: root.fill-kind == 4 ? white : Theme.p.text;
+                                    font-size: 13px;
+                                    font-weight: 700;
+                                    selection-background-color: Theme.p.accent2;
+                                    edited => { root.custom-hex-edited(self.text); }
+                                    accessible-label: "Custom hex color";
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle { height: 6px; }
+                    Label { text: "RESOLUTION"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        for label[i] in root.res-labels: Chip {
+                            text: label;
+                            selected: root.resolution == i;
+                            clicked => { root.resolution = i; }
+                        }
+                    }
+
+                    Rectangle { height: 6px; }
+                    Label { text: "SAVE TO"; }
+                    Field {
+                        title: root.out-name == "" ? "Pick where to save" : root.out-name;
+                        subtitle: root.out-dir;
+                        action: root.out-name == "" ? "Browse" : "Change";
+                        clicked => { root.pick-output(); }
+                    }
+
+                    Rectangle { height: 8px; }
+                    if root.status != "": HorizontalLayout {
+                        spacing: 12px;
+                        Text {
+                            text: root.status;
+                            color: Theme.p.muted;
+                            font-size: 13px;
+                            wrap: word-wrap;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+                        if root.done: Text {
+                            text: "Show in folder";
+                            color: Theme.p.accent;
+                            font-size: 13px;
+                            font-weight: 700;
+                            horizontal-stretch: 0;
+                            vertical-alignment: center;
+                            accessible-role: button;
+                            accessible-action-default => { root.open-folder(); }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.open-folder(); } }
+                        }
+                    }
+                    RenderButton {
+                        enabled: root.can-render;
+                        busy: root.rendering;
+                        done: root.done;
+                        progress: root.progress;
+                        clicked => { root.render(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ───────────── Settings drawer ─────────────
+    backdrop := Rectangle {
+        y: root.bar-h;
+        height: root.height - root.bar-h;
+        background: #00000070;
+        opacity: root.settings-open ? 1 : 0;
+        visible: self.opacity > 0.01;
+        animate opacity { duration: 220ms; }
+        TouchArea { clicked => { root.settings-open = false; } }
+    }
+
+    drawer := Rectangle {
+        y: root.bar-h;
+        height: root.height - root.bar-h;
+        width: min(460px, root.width - 40px);
+        x: root.settings-open ? root.width - self.width : root.width + 40px;
+        animate x { duration: 280ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+        background: Theme.p.bg1;
+        drop-shadow-blur: 40px;
+        drop-shadow-color: #00000070;
+        TouchArea { } // swallow clicks so they don't reach the backdrop
+        Rectangle { x: 0; width: 1px; background: Theme.p.border; }
+
+        Flickable {
+            content-height: col.preferred-height;
+            col := VerticalLayout {
+                padding: 20px;
+                spacing: 14px;
+
+                HorizontalLayout {
+                    Text { text: "Settings"; color: Theme.p.text; font-size: 22px; font-weight: 800; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    close-btn := Rectangle {
+                        width: 34px;
+                        height: 34px;
+                        border-radius: 17px;
+                        background: close-ta.has-hover ? Theme.p.border : Theme.p.field;
+                        accessible-role: button;
+                        accessible-label: "Close settings";
+                        accessible-action-default => { root.settings-open = false; }
+                        Path {
+                            width: 10px;
+                            height: 10px;
+                            viewbox-width: 10;
+                            viewbox-height: 10;
+                            commands: "M 0 0 L 10 10 M 10 0 L 0 10";
+                            stroke: Theme.p.text;
+                            stroke-width: 1.4px;
+                            fill: transparent;
+                        }
+                        close-ta := TouchArea { mouse-cursor: pointer; clicked => { root.settings-open = false; } }
+                    }
+                }
+
+                // About hero
+                hero := Rectangle {
+                    height: 150px;
+                    border-radius: 18px;
+                    background: Theme.p.accent;
+                    clip: true;
+                    drop-shadow-blur: 24px;
+                    drop-shadow-color: Theme.p.accent2.transparentize(50%);
+                    Rectangle { x: hero.width - 150px; y: 14px; width: 120px; height: 120px; border-radius: 60px; background: #ffffff14; }
+                    Rectangle { x: hero.width - 96px; y: 44px; width: 64px; height: 64px; border-radius: 32px; background: #ffffff1c; }
+                    Rectangle { x: hero.width - 210px; y: 96px; width: 34px; height: 34px; border-radius: 17px; background: #ffffff12; }
+                    HorizontalLayout {
+                        padding: 20px;
+                        spacing: 16px;
+                        VerticalLayout {
+                            alignment: center;
+                            Logo { size: 64px; inverted: true; }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 4px;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Text { text: "rmpyou"; color: white; font-size: 26px; font-weight: 800; vertical-alignment: center; }
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        border-radius: 9px;
+                                        background: #ffffff30;
+                                        HorizontalLayout {
+                                            padding-left: 8px;
+                                            padding-right: 8px;
+                                            padding-top: 2px;
+                                            padding-bottom: 2px;
+                                            Text { text: "v" + root.app-version; color: white; font-size: 11px; font-weight: 700; }
+                                        }
+                                    }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            Text {
+                                text: "Turn an MP3 and its artwork into a YouTube-ready video. Original audio, tiny files, no GPU.";
+                                color: #ffffffd8;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+
+                Section {
+                    title: "APPEARANCE";
+                    HorizontalLayout {
+                        spacing: 10px;
+                        ThemeCard { index: 0; name: Theme.names[0]; picked(i) => { Theme.index = i; root.settings-changed(); } }
+                        ThemeCard { index: 1; name: Theme.names[1]; picked(i) => { Theme.index = i; root.settings-changed(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        ThemeCard { index: 2; name: Theme.names[2]; picked(i) => { Theme.index = i; root.settings-changed(); } }
+                        ThemeCard { index: 3; name: Theme.names[3]; picked(i) => { Theme.index = i; root.settings-changed(); } }
+                    }
+                }
+
+                Section {
+                    title: "UPDATES";
+                    HorizontalLayout {
+                        spacing: 12px;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 3px;
+                            Text {
+                                color: Theme.p.text;
+                                font-size: 14px;
+                                font-weight: 700;
+                                text: root.update-state == "available" ? "Version " + root.update-version + " is available"
+                                    : root.update-state == "checking" ? "Checking for updates…"
+                                    : root.update-state == "downloading" ? "Downloading update…"
+                                    : root.update-state == "ready" ? "Update installed. Restart to finish."
+                                    : root.update-state == "latest" ? "You're up to date"
+                                    : root.update-state == "failed" ? "Couldn't reach GitHub"
+                                    : root.update-state == "disabled" ? "Updates are off in local builds"
+                                    : "Version " + root.app-version;
+                            }
+                            Text {
+                                color: Theme.p.muted;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                                text: root.update-state == "disabled"
+                                    ? "Official builds from GitHub Releases update themselves."
+                                    : "Installed: v" + root.app-version + " · from GitHub Releases";
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            if root.update-state == "available": Button { primary: true; text: "Install"; clicked => { root.do-update(); } }
+                            if root.update-state == "ready": Button { primary: true; text: "Restart"; clicked => { root.restart(); } }
+                            if root.update-state != "available" && root.update-state != "ready": Button {
+                                text: "Check now";
+                                enabled: root.update-state != "disabled" && root.update-state != "checking" && root.update-state != "downloading";
+                                clicked => { root.check-update(); }
+                            }
+                        }
+                    }
+                    Rectangle { height: 1px; background: Theme.p.border; }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Text {
+                            text: "Check for updates at startup";
+                            color: Theme.p.text;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Switch {
+                                checked <=> root.auto-update;
+                                toggled => { root.settings-changed(); }
+                            }
+                        }
+                    }
+                }
+
+                Section {
+                    title: "FFMPEG ENGINE";
+                    HorizontalLayout {
+                        spacing: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 12px;
+                                height: 12px;
+                                border-radius: 6px;
+                                background: root.ffmpeg-ok ? #22c55e : #f59e0b;
+                                drop-shadow-blur: 8px;
+                                drop-shadow-color: root.ffmpeg-ok ? #22c55e90 : #f59e0b90;
+                            }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 3px;
+                            Text {
+                                text: root.ffmpeg-ok ? "Ready · " + root.ffmpeg-source : "Not installed";
+                                color: Theme.p.text;
+                                font-size: 14px;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: root.ffmpeg-ok ? "Version " + root.ffmpeg-version : "Needed to encode videos";
+                                color: Theme.p.muted;
+                                font-size: 12px;
+                                overflow: elide;
+                            }
+                            if root.ffmpeg-path != "": Text {
+                                text: root.ffmpeg-path;
+                                color: Theme.p.muted;
+                                font-size: 11px;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                    if root.ffmpeg-busy: VerticalLayout {
+                        spacing: 6px;
+                        Text { text: root.ffmpeg-msg; color: Theme.p.muted; font-size: 12px; }
+                        Rectangle {
+                            height: 6px;
+                            border-radius: 3px;
+                            background: Theme.p.field;
+                            Rectangle {
+                                x: 0;
+                                width: parent.width * root.ffmpeg-progress;
+                                border-radius: 3px;
+                                background: Theme.p.accent;
+                                animate width { duration: 250ms; }
+                            }
+                        }
+                    }
+                    if !root.ffmpeg-busy && root.ffmpeg-msg != "": Text { text: root.ffmpeg-msg; color: Theme.p.muted; font-size: 12px; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button {
+                            primary: !root.ffmpeg-ok;
+                            enabled: !root.ffmpeg-busy && !root.rendering;
+                            text: root.ffmpeg-ok ? "Get latest build" : "Download FFmpeg";
+                            clicked => { root.install-ffmpeg(); }
+                        }
+                        Button {
+                            text: "Open folder";
+                            enabled: root.ffmpeg-path != "";
+                            clicked => { root.open-ffmpeg-folder(); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    Text {
+                        text: "rmpyou looks for FFmpeg next to the app, then in its own folder, then on your PATH. Downloads come from BtbN/FFmpeg-Builds on GitHub and stay separate from the app, so app updates stay small.";
+                        color: Theme.p.muted;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                }
+
+                Section {
+                    title: "CREDITS";
+                    HorizontalLayout {
+                        spacing: 14px;
+                        Rectangle {
+                            width: 52px;
+                            height: 52px;
+                            border-radius: 26px;
+                            background: Theme.p.accent2;
+                            drop-shadow-blur: 14px;
+                            drop-shadow-color: Theme.p.accent2.transparentize(50%);
+                            Text { text: root.author-initials; color: white; font-size: 18px; font-weight: 800; }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 2px;
+                            Text { text: "Created by"; color: Theme.p.muted; font-size: 11px; }
+                            Text { text: root.author; color: Theme.p.text; font-size: 17px; font-weight: 800; }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        if root.repo-url != "": VerticalLayout {
+                            alignment: center;
+                            Button { text: "GitHub"; clicked => { root.open-url(root.repo-url); } }
+                        }
+                    }
+                    Text { text: "Built with"; color: Theme.p.muted; font-size: 11px; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Tag { text: "Rust"; clicked => { root.open-url("https://www.rust-lang.org"); } }
+                        Tag { text: "Slint"; clicked => { root.open-url("https://slint.dev"); } }
+                        Tag { text: "FFmpeg"; clicked => { root.open-url("https://ffmpeg.org"); } }
+                        Tag { text: "x264"; clicked => { root.open-url("https://www.videolan.org/developers/x264.html"); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    Text {
+                        text: "© 2026 " + root.author + " · MIT License · FFmpeg is licensed under the GPL";
+                        color: Theme.p.muted;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+
+    // Thin window outline (frameless windows have no OS border)
+    if !root.is-max: Rectangle {
+        border-width: 1px;
+        border-color: Theme.p.border;
+    }
+
+    // Resize grips: E, N, NE, NW, S, SE, SW, W (matches RESIZE_DIRS in Rust)
+    if !root.is-max: Grip { dir: 0; x: root.width - grip; y: grip; width: grip; height: root.height - 2 * grip; mouse-cursor: ew-resize; start(d) => { root.start-resize(d); } }
+    if !root.is-max: Grip { dir: 1; x: grip; y: 0; width: root.width - 2 * grip; height: grip; mouse-cursor: ns-resize; start(d) => { root.start-resize(d); } }
+    if !root.is-max: Grip { dir: 2; x: root.width - grip; y: 0; width: grip; height: grip; mouse-cursor: nesw-resize; start(d) => { root.start-resize(d); } }
+    if !root.is-max: Grip { dir: 3; x: 0; y: 0; width: grip; height: grip; mouse-cursor: nwse-resize; start(d) => { root.start-resize(d); } }
+    if !root.is-max: Grip { dir: 4; x: grip; y: root.height - grip; width: root.width - 2 * grip; height: grip; mouse-cursor: ns-resize; start(d) => { root.start-resize(d); } }
+    if !root.is-max: Grip { dir: 5; x: root.width - grip; y: root.height - grip; width: grip; height: grip; mouse-cursor: nwse-resize; start(d) => { root.start-resize(d); } }
+    if !root.is-max: Grip { dir: 6; x: 0; y: root.height - grip; width: grip; height: grip; mouse-cursor: nesw-resize; start(d) => { root.start-resize(d); } }
+    if !root.is-max: Grip { dir: 7; x: 0; y: grip; width: grip; height: root.height - 2 * grip; mouse-cursor: ew-resize; start(d) => { root.start-resize(d); } }
+
+    // Drag-and-drop overlay
+    if root.dragging: Rectangle {
+        background: Theme.p.bg1.transparentize(12%);
+        Rectangle {
+            x: 24px;
+            y: 24px;
+            width: parent.width - 48px;
+            height: parent.height - 48px;
+            border-radius: 24px;
+            border-width: 3px;
+            border-color: Theme.p.accent;
+            background: Theme.p.accent.transparentize(88%);
+            VerticalLayout {
+                alignment: center;
+                spacing: 10px;
+                Text { text: "+"; color: Theme.p.accent; font-size: 64px; font-weight: 300; horizontal-alignment: center; }
+                Text { text: "Drop it here"; color: Theme.p.text; font-size: 28px; font-weight: 800; horizontal-alignment: center; }
+                Text { text: "MP3 becomes the audio · PNG, JPG, WEBP or BMP becomes the artwork"; color: Theme.p.muted; font-size: 14px; horizontal-alignment: center; }
+            }
+        }
+    }
+}
