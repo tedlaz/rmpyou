@@ -226,8 +226,8 @@ component Section inherits Rectangle {
     border-width: 1px;
     border-color: Theme.p.border;
     VerticalLayout {
-        padding: 18px;
-        spacing: 12px;
+        padding: 14px;
+        spacing: 10px;
         Label { text: root.title; }
         @children
     }
@@ -290,7 +290,7 @@ component ThemeCard inherits Rectangle {
     property <Palette> pal: Theme.palettes[index];
     property <bool> selected: Theme.index == index;
     callback picked(int);
-    height: 84px;
+    height: 62px;
     border-radius: 14px;
     background: pal.bg1;
     border-width: selected ? 2px : 1px;
@@ -301,19 +301,19 @@ component ThemeCard inherits Rectangle {
     // Mini mock of the app in this palette
     Rectangle {
         x: 12px;
-        y: 12px;
+        y: 9px;
         width: parent.width - 24px;
-        height: 36px;
+        height: 26px;
         border-radius: 8px;
         background: pal.bg2;
-        Rectangle { x: 8px; y: 8px; width: 20px; height: 20px; border-radius: 6px; background: pal.accent; }
-        Rectangle { x: 36px; y: 11px; width: parent.width * 0.35; height: 5px; border-radius: 2.5px; background: pal.text; opacity: 0.8; }
-        Rectangle { x: 36px; y: 21px; width: parent.width * 0.22; height: 5px; border-radius: 2.5px; background: pal.muted; }
-        Rectangle { x: parent.width - 34px; y: 10px; width: 26px; height: 16px; border-radius: 8px; background: pal.accent2; }
+        Rectangle { x: 6px; y: 5px; width: 16px; height: 16px; border-radius: 5px; background: pal.accent; }
+        Rectangle { x: 30px; y: 7px; width: parent.width * 0.35; height: 5px; border-radius: 2.5px; background: pal.text; opacity: 0.8; }
+        Rectangle { x: 30px; y: 15px; width: parent.width * 0.22; height: 5px; border-radius: 2.5px; background: pal.muted; }
+        Rectangle { x: parent.width - 30px; y: 6px; width: 24px; height: 14px; border-radius: 7px; background: pal.accent2; }
     }
     Text {
         x: 14px;
-        y: 56px;
+        y: 39px;
         text: root.name;
         color: pal.text;
         font-size: 13px;
@@ -321,7 +321,7 @@ component ThemeCard inherits Rectangle {
     }
     if selected: Rectangle {
         x: parent.width - 30px;
-        y: 55px;
+        y: 38px;
         width: 18px;
         height: 18px;
         border-radius: 9px;
@@ -805,79 +805,75 @@ export component AppWindow inherits Window {
         Flickable {
             content-height: col.preferred-height;
             col := VerticalLayout {
-                padding: 20px;
-                spacing: 14px;
+                padding: 16px;
+                spacing: 10px;
 
-                HorizontalLayout {
-                    Text { text: "Settings"; color: Theme.p.text; font-size: 22px; font-weight: 800; vertical-alignment: center; }
-                    Rectangle { horizontal-stretch: 1; }
-                    close-btn := Rectangle {
-                        width: 34px;
-                        height: 34px;
-                        border-radius: 17px;
-                        background: close-ta.has-hover ? Theme.p.border : Theme.p.field;
-                        accessible-role: button;
-                        accessible-label: "Close settings";
-                        accessible-action-default => { root.settings-open = false; }
-                        Path {
-                            width: 10px;
-                            height: 10px;
-                            viewbox-width: 10;
-                            viewbox-height: 10;
-                            commands: "M 0 0 L 10 10 M 10 0 L 0 10";
-                            stroke: Theme.p.text;
-                            stroke-width: 1.4px;
-                            fill: transparent;
-                        }
-                        close-ta := TouchArea { mouse-cursor: pointer; clicked => { root.settings-open = false; } }
-                    }
-                }
-
-                // About hero
+                // Compact about bar (doubles as the drawer header)
                 hero := Rectangle {
-                    height: 150px;
-                    border-radius: 18px;
+                    height: 68px;
+                    border-radius: 16px;
                     background: Theme.p.accent;
                     clip: true;
-                    drop-shadow-blur: 24px;
+                    drop-shadow-blur: 20px;
                     drop-shadow-color: Theme.p.accent2.transparentize(50%);
-                    Rectangle { x: hero.width - 150px; y: 14px; width: 120px; height: 120px; border-radius: 60px; background: #ffffff14; }
-                    Rectangle { x: hero.width - 96px; y: 44px; width: 64px; height: 64px; border-radius: 32px; background: #ffffff1c; }
-                    Rectangle { x: hero.width - 210px; y: 96px; width: 34px; height: 34px; border-radius: 17px; background: #ffffff12; }
                     HorizontalLayout {
-                        padding: 20px;
-                        spacing: 16px;
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 12px;
                         VerticalLayout {
                             alignment: center;
-                            Logo { size: 64px; inverted: true; }
+                            Logo { size: 44px; inverted: true; }
                         }
                         VerticalLayout {
                             alignment: center;
-                            spacing: 4px;
+                            spacing: 2px;
                             HorizontalLayout {
-                                spacing: 10px;
-                                Text { text: "rmpyou"; color: white; font-size: 26px; font-weight: 800; vertical-alignment: center; }
+                                spacing: 8px;
+                                Text { text: "rmpyou"; color: white; font-size: 18px; font-weight: 800; vertical-alignment: center; }
                                 VerticalLayout {
                                     alignment: center;
                                     Rectangle {
-                                        border-radius: 9px;
+                                        border-radius: 8px;
                                         background: #ffffff30;
                                         HorizontalLayout {
-                                            padding-left: 8px;
-                                            padding-right: 8px;
-                                            padding-top: 2px;
-                                            padding-bottom: 2px;
-                                            Text { text: "v" + root.app-version; color: white; font-size: 11px; font-weight: 700; }
+                                            padding-left: 7px;
+                                            padding-right: 7px;
+                                            padding-top: 1px;
+                                            padding-bottom: 1px;
+                                            Text { text: "v" + root.app-version; color: white; font-size: 10px; font-weight: 700; }
                                         }
                                     }
                                 }
                                 Rectangle { horizontal-stretch: 1; }
                             }
                             Text {
-                                text: "Turn an MP3 and its artwork into a YouTube-ready video. Original audio, tiny files, no GPU.";
+                                text: "MP3 + artwork → YouTube video · original audio · no GPU";
                                 color: #ffffffd8;
-                                font-size: 12px;
-                                wrap: word-wrap;
+                                font-size: 11px;
+                                overflow: elide;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            close-btn := Rectangle {
+                                width: 30px;
+                                height: 30px;
+                                border-radius: 15px;
+                                background: close-ta.has-hover ? #ffffff40 : #ffffff24;
+                                accessible-role: button;
+                                accessible-label: "Close settings";
+                                accessible-action-default => { root.settings-open = false; }
+                                Path {
+                                    width: 10px;
+                                    height: 10px;
+                                    viewbox-width: 10;
+                                    viewbox-height: 10;
+                                    commands: "M 0 0 L 10 10 M 10 0 L 0 10";
+                                    stroke: white;
+                                    stroke-width: 1.6px;
+                                    fill: transparent;
+                                }
+                                close-ta := TouchArea { mouse-cursor: pointer; clicked => { root.settings-open = false; } }
                             }
                         }
                     }
@@ -1028,7 +1024,7 @@ export component AppWindow inherits Window {
                         Rectangle { horizontal-stretch: 1; }
                     }
                     Text {
-                        text: "rmpyou looks for FFmpeg next to the app, then in its own folder, then on your PATH. Downloads come from BtbN/FFmpeg-Builds on GitHub and stay separate from the app, so app updates stay small.";
+                        text: "Search order: next to the app → rmpyou folder → PATH";
                         color: Theme.p.muted;
                         font-size: 11px;
                         wrap: word-wrap;
@@ -1040,13 +1036,13 @@ export component AppWindow inherits Window {
                     HorizontalLayout {
                         spacing: 14px;
                         Rectangle {
-                            width: 52px;
-                            height: 52px;
-                            border-radius: 26px;
+                            width: 40px;
+                            height: 40px;
+                            border-radius: 20px;
                             background: Theme.p.accent2;
                             drop-shadow-blur: 14px;
                             drop-shadow-color: Theme.p.accent2.transparentize(50%);
-                            Text { text: root.author-initials; color: white; font-size: 18px; font-weight: 800; }
+                            Text { text: root.author-initials; color: white; font-size: 15px; font-weight: 800; }
                         }
                         VerticalLayout {
                             alignment: center;
@@ -1060,9 +1056,9 @@ export component AppWindow inherits Window {
                             Button { text: "GitHub"; clicked => { root.open-url(root.repo-url); } }
                         }
                     }
-                    Text { text: "Built with"; color: Theme.p.muted; font-size: 11px; }
                     HorizontalLayout {
                         spacing: 6px;
+                        Text { text: "Built with"; color: Theme.p.muted; font-size: 11px; vertical-alignment: center; }
                         Tag { text: "Rust"; clicked => { root.open-url("https://www.rust-lang.org"); } }
                         Tag { text: "Slint"; clicked => { root.open-url("https://slint.dev"); } }
                         Tag { text: "FFmpeg"; clicked => { root.open-url("https://ffmpeg.org"); } }
