@@ -682,6 +682,23 @@ fn load_audio(ui: &AppWindow, path: &Path) {
     set_output(ui, &path.with_extension("mp4"));
     ui.set_done(false);
     ui.set_status("".into());
+    if let Some(cover) = extract_cover(path) {
+        load_image(ui, &cover);
+    }
+}
+
+/// Saves the MP3's embedded cover art (ID3 picture) as a PNG in the temp dir, if it has one.
+fn extract_cover(audio: &Path) -> Option<PathBuf> {
+    let out = std::env::temp_dir().join(format!("rmpyou-cover-{}.png", std::process::id()));
+    tool("ffmpeg")
+        .args(["-y", "-loglevel", "error", "-i"])
+        .arg(audio)
+        .args(["-map", "0:v:0", "-frames:v", "1"])
+        .arg(&out)
+        .status()
+        .ok()?
+        .success()
+        .then_some(out)
 }
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -882,5 +899,15 @@ mod tests {
         assert!(info.contains("h264,1920,1080,yuv420p"), "{info}");
         assert!(info.contains("mp3,"), "audio must be stream-copied: {info}");
         assert!((probe_duration(&out).unwrap() - dur).abs() < 0.2);
+
+        // No embedded art -> None; with art -> extracted PNG.
+        assert!(extract_cover(&mp3).is_none());
+        let tagged = dir.join("tagged.mp3");
+        assert!(tool("ffmpeg")
+            .args(["-y", "-loglevel", "error", "-i"]).arg(&mp3).arg("-i").arg(&img)
+            .args(["-map", "0:a", "-map", "1:v", "-c", "copy", "-disposition:v", "attached_pic"])
+            .arg(&tagged).status().unwrap().success());
+        let cover = extract_cover(&tagged).unwrap();
+        assert!(slint::Image::load_from_path(&cover).is_ok());
     }
 }

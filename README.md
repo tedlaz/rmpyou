@@ -3,6 +3,7 @@
 Turn an **MP3** and a **cover image** into a video ready to upload to YouTube.
 
 - Drag and drop an MP3 or image anywhere on the window
+- MP3 cover art (ID3) is used as the image automatically
 - Live 16:9 preview; the image is letterboxed, never cropped
 - Custom frameless title bar
 - 720p / 1080p / 4K output: H.264 still image + your original MP3 audio copied bit-for-bit (no re-encode, no quality loss). The video ends up only slightly bigger than the MP3 (~1.1×)
