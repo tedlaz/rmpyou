@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # GITHUB_REPOSITORY is baked in at compile time and enables the auto-updater.
+      - run: cargo build --release
+
+      - name: Package with ffmpeg
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip -OutFile ff.zip
+          Expand-Archive ff.zip ff
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target/release/rmpyou.exe, README.md, LICENSE dist/
+          Get-ChildItem ff -Recurse -Include ffmpeg.exe, ffprobe.exe | Copy-Item -Destination dist
+          Get-ChildItem ff -Recurse -Filter LICENSE | Select-Object -First 1 | Copy-Item -Destination dist/FFMPEG-LICENSE.txt
+          Compress-Archive dist/* rmpyou-x86_64-pc-windows-msvc.zip
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: rmpyou-x86_64-pc-windows-msvc.zip
+          generate_release_notes: true

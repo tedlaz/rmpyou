@@ -1,0 +1,15 @@
+[package]
+name = "rmpyou"
+version = "0.1.0"
+edition = "2024"
+description = "Turn an MP3 and a cover image into a YouTube-ready video"
+license = "MIT"
+
+[dependencies]
+slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software", "image-default-formats", "accessibility"] }
+rfd = "0.17"
+self_update = { version = "1.3", default-features = false, features = ["ureq", "rustls", "github", "compression-zip-deflate"] }
+
+[profile.release]
+lto = true
+strip = true
