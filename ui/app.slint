@@ -256,22 +256,12 @@ component WinButton inherits Rectangle {
     }
 }
 
-component Logo inherits Rectangle {
+// App logo (ui/logo.png: rounded tile with transparent corners; also the window icon)
+component Logo inherits Image {
     in property <length> size: 32px;
-    in property <bool> inverted;
     width: size;
     height: size;
-    border-radius: size * 0.28;
-    background: inverted ? white : Theme.p.accent;
-    Path {
-        width: root.size * 0.34;
-        height: root.size * 0.38;
-        x: root.size * 0.37;
-        viewbox-width: 11;
-        viewbox-height: 12;
-        fill: root.inverted ? Theme.p.accent : white;
-        commands: "M 0 0 L 11 6 L 0 12 Z";
-    }
+    source: @image-url("logo.png");
 }
 
 component ThemeCard inherits Rectangle {
@@ -398,6 +388,7 @@ component HuntCard inherits Rectangle {
 
 export component AppWindow inherits Window {
     title: "rmpyou — MP3 to YouTube video";
+    icon: @image-url("logo.png");
     no-frame: true;
     preferred-width: 640px;
     preferred-height: 860px;
@@ -513,10 +504,7 @@ export component AppWindow inherits Window {
                 spacing: 12px;
                 VerticalLayout {
                     alignment: center;
-                    Logo {
-                        drop-shadow-blur: 14px;
-                        drop-shadow-color: Theme.p.accent2.transparentize(35%);
-                    }
+                    Logo { size: 34px; }
                 }
                 VerticalLayout {
                     alignment: center;
@@ -886,7 +874,7 @@ export component AppWindow inherits Window {
                         spacing: 12px;
                         VerticalLayout {
                             alignment: center;
-                            Logo { size: 44px; inverted: true; }
+                            Logo { size: 48px; }
                         }
                         VerticalLayout {
                             alignment: center;
