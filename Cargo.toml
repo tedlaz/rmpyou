@@ -1,6 +1,6 @@
 [package]
 name = "rmpyou"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Ted Lazaros"]
 edition = "2024"
 description = "Turn an MP3 and a cover image into a YouTube-ready video"
