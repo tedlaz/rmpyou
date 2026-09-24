@@ -56,27 +56,18 @@ slint::slint! {
 
     component Button inherits Rectangle {
         in property <string> text;
-        in property <bool> primary;
-        in property <bool> enabled: true;
         callback clicked;
-        min-height: primary ? 54px : 38px;
-        border-radius: primary ? 14px : 10px;
-        background: primary
-            ? Theme.p.accent
-            : (ta.has-hover && enabled ? Theme.p.border : Theme.p.field);
-        border-width: primary ? 0px : 1px;
+        min-height: 38px;
+        border-radius: 10px;
+        background: ta.has-hover ? Theme.p.border : Theme.p.field;
+        border-width: 1px;
         border-color: Theme.p.border;
-        opacity: !enabled ? 0.4 : ta.pressed ? 0.8 : 1;
-        drop-shadow-blur: primary && enabled ? (ta.has-hover ? 28px : 18px) : 0px;
-        drop-shadow-color: Theme.p.accent2.transparentize(35%);
-        animate drop-shadow-blur { duration: 200ms; }
-        animate opacity { duration: 150ms; }
+        opacity: ta.pressed ? 0.8 : 1;
         accessible-role: button;
         accessible-label: text;
-        accessible-action-default => { if enabled { clicked(); } }
+        accessible-action-default => { clicked(); }
         ta := TouchArea {
-            enabled: root.enabled;
-            mouse-cursor: root.enabled ? pointer : default;
+            mouse-cursor: pointer;
             clicked => { root.clicked(); }
         }
         HorizontalLayout {
@@ -84,12 +75,53 @@ slint::slint! {
             padding-right: 18px;
             Text {
                 text: root.text;
-                color: root.primary ? white : Theme.p.text;
-                font-size: root.primary ? 17px : 13px;
-                font-weight: root.primary ? 700 : 600;
+                color: Theme.p.text;
+                font-size: 13px;
+                font-weight: 600;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
+        }
+    }
+
+    // Primary action; while busy the button itself becomes the progress bar.
+    component RenderButton inherits Rectangle {
+        in property <bool> enabled;
+        in property <bool> busy;
+        in property <bool> done;
+        in property <float> progress;
+        callback clicked;
+        height: 58px;
+        border-radius: 14px;
+        clip: true;
+        background: busy ? Theme.p.accent.darker(45%) : Theme.p.accent;
+        opacity: !enabled && !busy ? 0.4 : ta.pressed ? 0.85 : 1;
+        drop-shadow-blur: enabled || busy ? (ta.has-hover ? 28px : 18px) : 0px;
+        drop-shadow-color: Theme.p.accent2.transparentize(35%);
+        animate drop-shadow-blur { duration: 200ms; }
+        animate opacity { duration: 150ms; }
+        accessible-role: button;
+        accessible-label: busy ? "Rendering " + Math.round(progress * 100) + " percent" : "Render video";
+        accessible-action-default => { if enabled { clicked(); } }
+        if busy: Rectangle {
+            x: 0;
+            width: parent.width * root.progress;
+            border-radius: 14px;
+            height: parent.height;
+            background: Theme.p.accent;
+            animate width { duration: 300ms; easing: ease-out; }
+        }
+        ta := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: root.enabled ? pointer : default;
+            clicked => { root.clicked(); }
+        }
+        Text {
+            text: root.busy ? "Rendering…  " + Math.round(root.progress * 100) + "%"
+                : root.done ? "Render again" : "Render video";
+            color: white;
+            font-size: 17px;
+            font-weight: 700;
         }
     }
 
@@ -165,10 +197,10 @@ slint::slint! {
     export component AppWindow inherits Window {
         title: "rmpyou — MP3 to YouTube video";
         no-frame: true;
-        preferred-width: 1000px;
-        preferred-height: 660px;
-        min-width: 820px;
-        min-height: 580px;
+        preferred-width: 640px;
+        preferred-height: 840px;
+        min-width: 520px;
+        min-height: 720px;
         background: @linear-gradient(135deg, Theme.p.bg1 0%, Theme.p.bg2 100%);
 
         in property <image> cover;
@@ -325,144 +357,130 @@ slint::slint! {
                 }
             }
 
-            HorizontalLayout {
+            VerticalLayout {
                 padding: 24px;
-                spacing: 22px;
+            Card {
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 10px;
 
-                // Artwork / live 16:9 preview
-                Card {
-                    horizontal-stretch: 3;
-                    preferred-width: 1px;
-                    VerticalLayout {
-                        padding: 22px;
-                        spacing: 14px;
-                        HorizontalLayout {
-                            spacing: 12px;
-                            Label { text: "ARTWORK"; }
-                            Label {
-                                text: root.has-cover ? "PREVIEW · " + root.res-labels[root.resolution] : "";
-                                horizontal-alignment: right;
-                            }
+                    Label { text: "AUDIO"; }
+                    Field {
+                        title: root.audio-name == "" ? "Choose or drop an MP3" : root.audio-name;
+                        subtitle: root.audio-info;
+                        action: root.audio-name == "" ? "Browse" : "Change";
+                        clicked => { root.pick-audio(); }
+                    }
+
+                    Rectangle { height: 6px; }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Label { text: "ARTWORK"; }
+                        Label {
+                            text: root.has-cover ? "PREVIEW · " + root.res-labels[root.resolution] + " · CLICK TO CHANGE" : "";
+                            horizontal-alignment: right;
                         }
-                        Rectangle {
-                            vertical-stretch: 1;
-                            min-height: 200px;
-                            frame := Rectangle {
-                                width: min(parent.width, parent.height * 16 / 9);
-                                height: self.width * 9 / 16;
-                                x: (parent.width - self.width) / 2;
-                                y: (parent.height - self.height) / 2;
-                                border-radius: 14px;
-                                clip: true;
-                                background: root.has-cover ? black : Theme.p.field;
-                                border-width: root.has-cover ? 0px : 2px;
-                                border-color: cover-ta.has-hover ? Theme.p.accent : Theme.p.border;
-                                animate border-color { duration: 150ms; }
-                                if root.has-cover: Image {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    source: root.cover;
-                                    image-fit: contain;
-                                }
-                                if !root.has-cover: VerticalLayout {
-                                    alignment: center;
-                                    spacing: 8px;
-                                    Text { text: "+"; color: Theme.p.accent; font-size: 44px; font-weight: 300; horizontal-alignment: center; }
-                                    Text { text: "Choose cover image"; color: Theme.p.text; font-size: 17px; font-weight: 600; horizontal-alignment: center; }
-                                    Text { text: "or drop one anywhere · PNG, JPG, WEBP, BMP · letterboxed to 16:9"; color: Theme.p.muted; font-size: 12px; horizontal-alignment: center; }
-                                }
-                                cover-ta := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { root.pick-image(); }
-                                }
+                    }
+                    Rectangle {
+                        vertical-stretch: 1;
+                        min-height: 180px;
+                        frame := Rectangle {
+                            width: min(parent.width, parent.height * 16 / 9);
+                            height: self.width * 9 / 16;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 14px;
+                            clip: true;
+                            background: root.has-cover ? black : Theme.p.field;
+                            border-width: root.has-cover ? 0px : 2px;
+                            border-color: cover-ta.has-hover ? Theme.p.accent : Theme.p.border;
+                            animate border-color { duration: 150ms; }
+                            if root.has-cover: Image {
+                                width: parent.width;
+                                height: parent.height;
+                                source: root.cover;
+                                image-fit: contain;
+                            }
+                            if !root.has-cover: VerticalLayout {
+                                alignment: center;
+                                spacing: 8px;
+                                Text { text: "+"; color: Theme.p.accent; font-size: 40px; font-weight: 300; horizontal-alignment: center; }
+                                Text { text: "Choose cover image"; color: Theme.p.text; font-size: 16px; font-weight: 600; horizontal-alignment: center; }
+                                Text { text: "or drop one anywhere · PNG, JPG, WEBP, BMP"; color: Theme.p.muted; font-size: 12px; horizontal-alignment: center; }
+                            }
+                            cover-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.pick-image(); }
                             }
                         }
                     }
-                }
 
-                // Settings + render
-                Card {
-                    horizontal-stretch: 2;
-                    preferred-width: 1px;
-                    min-width: 330px;
-                    VerticalLayout {
-                        padding: 22px;
-                        spacing: 10px;
-
-                        Label { text: "AUDIO"; }
-                        Field {
-                            title: root.audio-name == "" ? "Choose or drop an MP3" : root.audio-name;
-                            subtitle: root.audio-info;
-                            action: root.audio-name == "" ? "Browse" : "Change";
-                            clicked => { root.pick-audio(); }
-                        }
-
-                        Rectangle { height: 6px; }
-                        Label { text: "RESOLUTION"; }
-                        HorizontalLayout {
-                            spacing: 8px;
-                            for label[i] in root.res-labels: Rectangle {
-                                height: 40px;
-                                border-radius: 10px;
-                                background: root.resolution == i
-                                    ? Theme.p.accent
-                                    : (seg-ta.has-hover ? Theme.p.border : Theme.p.field);
-                                border-width: root.resolution == i ? 0px : 1px;
-                                border-color: Theme.p.border;
-                                accessible-role: button;
-                                accessible-label: label;
-                                accessible-action-default => { root.resolution = i; }
-                                seg-ta := TouchArea { mouse-cursor: pointer; clicked => { root.resolution = i; } }
-                                Text {
-                                    text: label;
-                                    color: root.resolution == i ? white : Theme.p.text;
-                                    font-size: 13px;
-                                    font-weight: 700;
-                                }
+                    Rectangle { height: 6px; }
+                    Label { text: "RESOLUTION"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        for label[i] in root.res-labels: Rectangle {
+                            height: 40px;
+                            border-radius: 10px;
+                            background: root.resolution == i
+                                ? Theme.p.accent
+                                : (seg-ta.has-hover ? Theme.p.border : Theme.p.field);
+                            border-width: root.resolution == i ? 0px : 1px;
+                            border-color: Theme.p.border;
+                            accessible-role: button;
+                            accessible-label: label;
+                            accessible-action-default => { root.resolution = i; }
+                            seg-ta := TouchArea { mouse-cursor: pointer; clicked => { root.resolution = i; } }
+                            Text {
+                                text: label;
+                                color: root.resolution == i ? white : Theme.p.text;
+                                font-size: 13px;
+                                font-weight: 700;
                             }
                         }
+                    }
 
-                        Rectangle { height: 6px; }
-                        Label { text: "SAVE TO"; }
-                        Field {
-                            title: root.out-name == "" ? "Pick where to save" : root.out-name;
-                            subtitle: root.out-dir;
-                            action: root.out-name == "" ? "Browse" : "Change";
-                            clicked => { root.pick-output(); }
-                        }
+                    Rectangle { height: 6px; }
+                    Label { text: "SAVE TO"; }
+                    Field {
+                        title: root.out-name == "" ? "Pick where to save" : root.out-name;
+                        subtitle: root.out-dir;
+                        action: root.out-name == "" ? "Browse" : "Change";
+                        clicked => { root.pick-output(); }
+                    }
 
-                        Rectangle { vertical-stretch: 1; }
-
-                        if root.status != "": Text {
+                    Rectangle { height: 8px; }
+                    if root.status != "": HorizontalLayout {
+                        spacing: 12px;
+                        Text {
                             text: root.status;
                             color: Theme.p.muted;
                             font-size: 13px;
                             wrap: word-wrap;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
                         }
-                        if root.rendering || root.done: Rectangle {
-                            height: 8px;
-                            border-radius: 4px;
-                            background: Theme.p.field;
-                            Rectangle {
-                                x: 0;
-                                width: parent.width * root.progress;
-                                border-radius: 4px;
-                                background: Theme.p.accent;
-                                animate width { duration: 300ms; easing: ease-out; }
-                            }
-                        }
-                        Button {
-                            primary: true;
-                            enabled: root.can-render;
-                            text: root.rendering ? "Rendering…  " + Math.round(root.progress * 100) + "%" : "Render video";
-                            clicked => { root.render(); }
-                        }
-                        if root.done: Button {
+                        if root.done: Text {
                             text: "Show in folder";
-                            clicked => { root.open-folder(); }
+                            color: Theme.p.accent;
+                            font-size: 13px;
+                            font-weight: 700;
+                            horizontal-stretch: 0;
+                            vertical-alignment: center;
+                            accessible-role: button;
+                            accessible-action-default => { root.open-folder(); }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.open-folder(); } }
                         }
                     }
+                    RenderButton {
+                        enabled: root.can-render;
+                        busy: root.rendering;
+                        done: root.done;
+                        progress: root.progress;
+                        clicked => { root.render(); }
+                    }
                 }
+            }
             }
         }
 
@@ -771,7 +789,7 @@ fn main() -> Result<(), slint::PlatformError> {
         ui.set_rendering(true);
         ui.set_done(false);
         ui.set_progress(0.0);
-        ui.set_status(format!("Encoding {}x{} H.264 + AAC…", res.0, res.1).into());
+        ui.set_status(format!("Encoding {}x{} video, keeping your original MP3 audio…", res.0, res.1).into());
         let weak = ui.as_weak();
         thread::spawn(move || {
             let w = weak.clone();
